@@ -5,6 +5,7 @@
 <!-- ================= FIREBASE SDK (Realtime Database) ================= -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
   /* =====================================================================
      CẤU HÌNH FIREBASE — THAY CÁC GIÁ TRỊ BÊN DƯỚI BẰNG THÔNG SỐ DỰ ÁN
@@ -14,6 +15,17 @@
      Thùng rác / Cộng tác viên" sẽ tự động lưu & đồng bộ realtime trên
      Firebase Realtime Database. Dữ liệu module "Thu – Chi nội bộ" KHÔNG
      dùng cấu hình này — xem phần LOCAL-ONLY STORAGE bên dưới.
+
+     ĐỂ BẬT ĐĂNG NHẬP GOOGLE THẬT (bắt buộc cho phần Auth bên dưới hoạt động):
+     1) Vào Firebase Console > Authentication > Sign-in method > bật "Google".
+     2) Vào Authentication > Settings > Authorized domains > thêm đúng tên
+        miền (domain) nơi đồng chí sẽ host file HTML này (vd: tên miền
+        Netlify/GitHub Pages/website riêng). Thiếu bước này Google sẽ báo lỗi
+        "auth/unauthorized-domain" khi bấm đăng nhập.
+     3) Vai trò (Owner/Editor/Viewer) KHÔNG cấu hình ở đây — Owner là người
+        dùng email Google đăng nhập đầu tiên để "Thiết lập cơ sở dữ liệu lõi"
+        (thường là Chủ tịch Hội), còn Editor/Viewer do Owner tự thêm bằng
+        đúng email Google của cấp dưới tại mục "Cài đặt & Chia sẻ" trong app.
   ===================================================================== */
   const firebaseConfig = {
     apiKey: "YOUR_API_KEY",
@@ -26,6 +38,11 @@
   };
   firebase.initializeApp(firebaseConfig);
   const rtdb = firebase.database();
+  const auth = firebase.auth();
+  // Ép luôn hiện màn hình chọn tài khoản Google (tránh tự động đăng nhập lại
+  // tài khoản Google gần nhất khi máy có nhiều tài khoản Google khác nhau).
+  const googleProvider = new firebase.auth.GoogleAuthProvider();
+  googleProvider.setCustomParameters({ prompt: 'select_account' });
 </script>
 <style>
   :root{
@@ -564,11 +581,44 @@
   }
 
   const IDENTITY_KEY = 'hnd_identity'; // chỉ lưu trên máy này (localStorage), không đưa lên đám mây
+  // Mỗi tài khoản Google (email) được gắn nhớ 1 "Mã định danh cấp Xã" trên máy này,
+  // để lần đăng nhập sau không phải nhập lại. Đây chỉ là cache cục bộ cho tiện thao
+  // tác — phân quyền thật (Owner/Editor/Viewer) luôn được kiểm tra lại theo email
+  // thật của Google so với cấu hình (config.ownerEmail / collaborators) trên Firebase.
+  function wardIdMapKey(email){ return `hnd_wardid_for_${emailToKey(email)}`; }
 
   async function boot(){
-    state.identity = lget(IDENTITY_KEY, null);
-    if(!state.identity){ state.view='login'; render(); return; }
-    await enterWorkspace();
+    state.view = 'boot'; render();
+    // Lắng nghe trạng thái đăng nhập Google thật qua Firebase Auth.
+    // Không còn cho phép gõ tay tên/email — email lấy trực tiếp từ tài khoản
+    // Google đã xác thực, dùng để đối chiếu phân quyền Owner/Editor/Viewer.
+    auth.onAuthStateChanged(async (user) => {
+      if(!user){
+        detachRealtime();
+        state.identity = null; lset(IDENTITY_KEY, null);
+        state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[]; state.collaborators={};
+        state.view = 'login';
+        render();
+        return;
+      }
+      const email = (user.email||'').toLowerCase().trim();
+      if(!email){
+        alert('Tài khoản Google này không trả về địa chỉ email công khai. Vui lòng đăng nhập bằng một tài khoản Google khác.');
+        await auth.signOut();
+        return;
+      }
+      const cachedWardId = lget(wardIdMapKey(email), '');
+      const identity = { name: user.displayName || email, email, photo: user.photoURL || '', wardId: cachedWardId || '' };
+      state.identity = identity;
+      if(!cachedWardId){
+        // Lần đầu đăng nhập Google trên máy này / email này -> hỏi Mã định danh cấp Xã
+        state.view = 'wardid';
+        render();
+        return;
+      }
+      lset(IDENTITY_KEY, identity);
+      await enterWorkspace();
+    });
   }
 
   // Sau khi có identity (đã biết wardId) -> kiểm tra Xã này đã có cấu hình
@@ -732,6 +782,7 @@
   // ================= RENDER =================
   function render(){
     if(state.view==='login') return renderLogin();
+    if(state.view==='wardid') return renderWardIdPrompt();
     if(state.view==='onboarding') return renderOnboarding();
     if(state.view==='app') return renderApp();
     root.innerHTML = '<div class="center-screen">Đang tải…</div>';
@@ -743,30 +794,63 @@
         <div class="auth-card">
           <div class="rice-badge">🌾</div>
           <h1>Quản lý Công tác Hội Nông dân cấp xã</h1>
-          <p class="sub">Đăng nhập để quản lý quỹ hỗ trợ nông dân, thu chi nội bộ, vốn vay, lãi suất và báo cáo địa phương</p>
-          <div class="field"><label>Họ và tên</label><input id="li-name" placeholder="Nguyễn Văn A"></div>
-          <div class="field"><label>Email</label><input id="li-email" placeholder="ten@gmail.com" type="email"></div>
-          <div class="field">
-            <label>Mã định danh cấp Xã *</label>
-            <input id="li-wardid" placeholder="vd: xabinhminh" style="text-transform:lowercase;">
-          </div>
-          <p class="sub" style="margin-top:-8px; margin-bottom:16px; font-size:11.5px; text-align:left;">
-            Chỉ gồm chữ thường không dấu, số, gạch dưới/gạch ngang. Cán bộ Xã tự đặt mã này khi thiết lập lần đầu; cán bộ Ấp/cộng tác viên nhập <b>đúng mã Xã đã cung cấp</b> để vào chung một cơ sở dữ liệu.
+          <p class="sub">Đăng nhập bằng tài khoản Google để quản lý quỹ hỗ trợ nông dân, thu chi nội bộ, vốn vay, lãi suất và báo cáo địa phương</p>
+          <button class="btn btn-gold btn-block" id="li-btn">🔒 Đăng nhập bằng Google</button>
+          <p class="sub" style="margin-top:16px; font-size:11.5px;">
+            Hệ thống lấy Họ tên &amp; Email trực tiếp từ tài khoản Google đã xác thực (không gõ tay).
+            Quyền truy cập — Chủ tài khoản / Cộng tác viên (sửa) / Chỉ xem — được cấp sẵn theo đúng địa chỉ email
+            trong mục Cài đặt &amp; Chia sẻ của từng Xã.
           </p>
-          <button class="btn btn-gold btn-block" id="li-btn">🔒 Đăng nhập bằng Google (giả lập)</button>
-          <p class="sub" style="margin-top:16px; font-size:11.5px;">Đây là bản mô phỏng đăng nhập trong môi trường artifact — không kết nối OAuth Google thật.</p>
         </div>
       </div>`;
     document.getElementById('li-btn').onclick = async ()=>{
-      const name = document.getElementById('li-name').value.trim();
-      const email = document.getElementById('li-email').value.trim().toLowerCase();
-      const wid = document.getElementById('li-wardid').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
-      if(!name || !email){ alert('Vui lòng nhập đầy đủ họ tên và email.'); return; }
+      const btn = document.getElementById('li-btn');
+      btn.disabled = true; btn.textContent = 'Đang mở cửa sổ đăng nhập Google…';
+      try{
+        await auth.signInWithPopup(googleProvider);
+        // Kết quả đăng nhập sẽ được xử lý tự động trong auth.onAuthStateChanged (boot()).
+      }catch(e){
+        console.error('Đăng nhập Google lỗi:', e);
+        if(!(e && e.code==='auth/popup-closed-by-user')){
+          alert('Đăng nhập Google thất bại. Vui lòng kiểm tra kết nối mạng, hoặc liên hệ quản trị viên để bật "Google" trong Firebase Console > Authentication > Sign-in method.');
+        }
+        btn.disabled = false; btn.textContent = '🔒 Đăng nhập bằng Google';
+      }
+    };
+  }
+
+  // Hiện ra đúng 1 lần cho mỗi tài khoản Google trên mỗi trình duyệt — sau khi
+  // Google đã xác thực xong nhưng máy này chưa biết Mã định danh cấp Xã tương ứng.
+  function renderWardIdPrompt(){
+    const idn = state.identity;
+    root.innerHTML = `
+      <div class="center-screen">
+        <div class="auth-card">
+          <div class="rice-badge">🌾</div>
+          <h1>Xin chào, ${idn.name||idn.email}</h1>
+          <p class="sub">Đã xác thực Google: <b>${idn.email}</b></p>
+          <div class="field" style="text-align:left;">
+            <label>Mã định danh cấp Xã *</label>
+            <input id="wi-wardid" placeholder="vd: xabinhminh" style="text-transform:lowercase;">
+          </div>
+          <p class="sub" style="margin-top:-8px; margin-bottom:16px; font-size:11.5px; text-align:left;">
+            Chỉ gồm chữ thường không dấu, số, gạch dưới/gạch ngang. Chủ tịch Hội tự đặt mã này khi thiết lập lần đầu
+            cho Xã; các cán bộ khác (Phó Chủ tịch, cán bộ Ấp/Thôn/Khu phố...) nhập <b>đúng mã Xã đã được cung cấp</b>
+            để vào chung một cơ sở dữ liệu — quyền hạn của từng người sẽ tự áp dụng theo đúng email Google vừa đăng nhập.
+          </p>
+          <button class="btn btn-primary btn-block" id="wi-continue">Tiếp tục</button>
+          <button class="btn btn-ghost btn-block" id="wi-logout" style="margin-top:8px;">Đăng xuất tài khoản này</button>
+        </div>
+      </div>`;
+    document.getElementById('wi-continue').onclick = async ()=>{
+      const wid = document.getElementById('wi-wardid').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
       if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh cấp Xã hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return; }
-      state.identity = {name, email, wardId: wid};
+      state.identity = {...state.identity, wardId: wid};
+      lset(wardIdMapKey(state.identity.email), wid);
       lset(IDENTITY_KEY, state.identity);
       await enterWorkspace();
     };
+    document.getElementById('wi-logout').onclick = async ()=>{ await auth.signOut(); };
   }
 
   function renderOnboarding(){
@@ -890,7 +974,7 @@
             <div><h2>${navItems().find(n=>n.id===state.activeTab).label}</h2><div class="sub">${state.config.wardName||'Chưa đặt tên xã'} · ${state.borrowers.filter(b=>!b.deleted).length} hộ vay đang theo dõi</div></div>
             <div class="top-actions">
               <button class="bell-btn" id="bell-btn">🔔${alerts.length?`<span class="bell-dot"></span>`:''}</button>
-              <div class="avatar">${(state.identity.name||'?')[0].toUpperCase()}</div>
+              <div class="avatar" ${state.identity.photo?`style="background-image:url('${state.identity.photo}'); background-size:cover; background-position:center;"`:''}>${state.identity.photo?'':(state.identity.name||'?')[0].toUpperCase()}</div>
               ${state.bellOpen? renderBellPanel() : ''}
             </div>
           </div>
@@ -903,9 +987,8 @@
     document.getElementById('bell-btn').onclick = (e)=>{ e.stopPropagation(); state.bellOpen = !state.bellOpen; render(); };
     document.getElementById('logout-btn').onclick = async ()=>{
       detachRealtime();
-      state.identity = null; lset(IDENTITY_KEY, null);
       state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[]; state.collaborators={};
-      state.view='login'; render();
+      await auth.signOut(); // auth.onAuthStateChanged (trong boot()) sẽ tự dọn identity & chuyển về màn hình đăng nhập
     };
     document.addEventListener('click', ()=>{ if(state.bellOpen){ state.bellOpen=false; render(); } }, {once:true});
 
@@ -1747,32 +1830,6 @@
       await pushLog(isNew ? 'thêm hộ vay' : 'chỉnh sửa hộ vay', `hộ ${updated.name} — gốc ${money(updated.principal)}`);
       close(); 
       render();
-    };
-  }
-
-  boot();
-})();
-</script>.trim(),
-        hamlet: wrap.querySelector('#m-hamlet').value,
-        project: wrap.querySelector('#m-project').value,
-        principal: parseFloat(wrap.querySelector('#m-principal').value)||0,
-        rate: parseFloat(wrap.querySelector('#m-rate').value)||0,
-        loanDate: wrap.querySelector('#m-loanDate').value,
-        dueDate: wrap.querySelector('#m-dueDate').value,
-        fundSource: wrap.querySelector('#m-fundSource').value.trim(),
-        prevBalance: parseFloat(wrap.querySelector('#m-prevBalance').value)||0,
-        isExtended: wrap.querySelector('#m-isExtended').checked,
-        extensionDueDate: wrap.querySelector('#m-extensionDueDate').value,
-        interestPaid: parseFloat(wrap.querySelector('#m-interestPaid').value)||0,
-        principalPaid: parseFloat(wrap.querySelector('#m-principalPaid').value)||0,
-        checked: wrap.querySelector('#m-checked').checked,
-        note: wrap.querySelector('#m-note').value.trim(),
-      };
-      if(isNew){ state.borrowers.push(updated); }
-      else { state.borrowers = state.borrowers.map(x=>x.id===updated.id? updated : x); }
-      await cSetRecord('borrowers', updated.id, updated);
-      await pushLog(isNew?'thêm mới':'chỉnh sửa', `hộ ${updated.name}`);
-      close(); render();
     };
   }
 
