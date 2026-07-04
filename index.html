@@ -1,3 +1,10 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+<meta name="theme-color" content="#2F4A3C">
+<title>Quản lý Công tác Hội Nông dân cấp xã/phường</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -102,7 +109,8 @@
   .btn{
     display:inline-flex; align-items:center; justify-content:center; gap:8px;
     padding:10px 18px; border-radius:8px; border:1px solid transparent;
-    font-size:13.5px; font-weight:600; transition:.15s;
+    font-size:13.5px; font-weight:600; transition:.15s; min-height:40px; line-height:1.2;
+    -webkit-tap-highlight-color:transparent;
   }
   .btn-primary{background:var(--rice-dark); color:var(--white);}
   .btn-primary:hover{background:var(--rice);}
@@ -177,7 +185,7 @@
   th{text-align:left; padding:9px 10px; background:var(--paper-2); color:var(--rice-dark); font-weight:700; font-size:11.5px; text-transform:uppercase; letter-spacing:.02em; white-space:nowrap; position:sticky; top:0;}
   td{padding:9px 10px; border-bottom:1px solid var(--paper-2); white-space:nowrap;}
   tr:hover td{background:#FCFAF3;}
-  .table-wrap{overflow:auto; max-height:60vh; border:1px solid var(--line); border-radius:10px;}
+  .table-wrap{overflow:auto; -webkit-overflow-scrolling:touch; max-width:100%; max-height:60vh; border:1px solid var(--line); border-radius:10px;}
   .money{font-family:'JetBrains Mono',monospace; font-weight:600;}
   .pill{display:inline-block; padding:2px 9px; border-radius:20px; font-size:11px; font-weight:700;}
   .pill-green{background:#E3EFE2; color:var(--green);}
@@ -219,13 +227,53 @@
   ::-webkit-scrollbar{width:8px; height:8px;}
   ::-webkit-scrollbar-thumb{background:var(--line); border-radius:6px;}
 
+  html{-webkit-text-size-adjust:100%; text-size-adjust:100%;}
+  body{margin:0; overflow-x:hidden;}
+  #root{overflow-x:hidden;}
+
   @media (max-width:820px){
     .app-shell{flex-direction:column;}
-    .sidebar{width:100%; flex-direction:row; overflow:auto; padding:10px;}
+    .sidebar{width:100%; flex-direction:row; overflow-x:auto; -webkit-overflow-scrolling:touch; padding:8px 10px;}
     .sidebar .brand{display:none;}
-    .nav-item{flex-shrink:0; width:auto;}
+    .nav-item{flex-shrink:0; width:auto; white-space:nowrap; padding:10px 14px;}
     .grid3{grid-template-columns:1fr;}
     .form-grid{grid-template-columns:1fr;}
+    .topbar{flex-wrap:wrap; padding:14px 16px; gap:10px;}
+    .content{padding:16px;}
+    .bell-panel{width:min(340px, calc(100vw - 32px)); right:-8px;}
+    .modal-bg{padding:0; align-items:stretch;}
+    .modal{max-width:100%; width:100%; min-height:100dvh; border-radius:0; display:flex; flex-direction:column;}
+    .modal-body{max-height:none; flex:1;}
+    .modal-head, .modal-foot{padding:14px 16px;}
+    .modal-foot{flex-wrap:wrap;}
+    .modal-foot .btn{flex:1; min-width:120px;}
+  }
+
+  /* ---- Điện thoại (≤600px): chữ đủ lớn, nút đủ to, cách xa để bấm không nhầm ---- */
+  @media (max-width:600px){
+    .auth-card{padding:28px 20px;}
+    .field input, .field select, .field textarea{font-size:16px; padding:12px 13px;}
+    .toolbar{gap:10px 8px;}
+    .toolbar input, .toolbar select{font-size:15px; padding:11px 12px; min-height:42px; flex:1 1 100%;}
+    .btn{font-size:14.5px; padding:11px 16px; min-height:44px;}
+    .btn-sm{padding:9px 12px; font-size:13px; min-height:38px;}
+    .toolbar .btn{flex:1 1 100%;}
+    table{font-size:14px;}
+    th{font-size:12px; padding:11px 12px;}
+    td{padding:12px; font-size:14px;}
+    .table-wrap{border-radius:10px;}
+    .panel-body{padding:14px;}
+    .panel-head{padding:13px 14px;}
+    .panel-head h3{font-size:14px;}
+    .stat-card{padding:16px;}
+    .stat-card .num{font-size:26px;}
+    .kv-row{font-size:13.5px; padding:9px 0;}
+    .divider-lbl{font-size:11px; margin:18px 0 10px;}
+    .topbar h2{font-size:16px;}
+    .modal-head h3{font-size:15px;}
+    .nav-item{font-size:13px; padding:11px 14px; gap:8px;}
+    .backup-actions .btn, .backup-actions{width:100%;}
+    .backup-actions .btn{flex:1 1 100%;}
   }
 
   /* ---- backup panel ---- */
@@ -255,6 +303,8 @@
     @page{ size:A4 portrait; margin:15mm 12mm; }
   }
 </style>
+</head>
+<body>
 <div id="root"></div>
 <div id="print-area"></div>
 
@@ -384,7 +434,7 @@
       'Số điện thoại': b.phone||'',
       'Địa chỉ': b.address||'',
       'Người bảo lãnh': b.guarantor||'',
-      'Ấp / Khu dân cư': b.hamlet||'',
+      [`Thuộc ${subAdminLabel()}`]: b.hamlet||'',
       'Phương án vay vốn': b.project||'',
       'Số tiền gốc (đ)': Math.round(parseFloat(b.principal)||0),
       'Lãi suất (%/năm)': parseFloat(b.rate)||0,
@@ -413,9 +463,9 @@
       <td>${fmtDate(b.loanDate)}</td><td>${fmtDate(b.dueDate)}</td>
       <td>${b.note||''}</td>
     </tr>`).join('');
-    const html = `<h2>SỔ VAY VỐN — HỘI NÔNG DÂN XÃ ${(state.config.wardName||'').toUpperCase()}</h2>
+    const html = `<h2>SỔ VAY VỐN — ${hoiNongDanTitle()}</h2>
     <p style="text-align:center;">Xuất ngày ${fmtDate(todayStr())} — Tổng số hộ: ${list.length}</p>
-    <table><thead><tr><th>Họ tên</th><th>CCCD</th><th>SĐT</th><th>Ấp</th><th>Phương án vay</th><th>Số tiền gốc</th><th>Lãi suất</th><th>Ngày vay</th><th>Đến hạn</th><th>Ghi chú</th></tr></thead>
+    <table><thead><tr><th>Họ tên</th><th>CCCD</th><th>SĐT</th><th>${subAdminLabel()}</th><th>Phương án vay</th><th>Số tiền gốc</th><th>Lãi suất</th><th>Ngày vay</th><th>Đến hạn</th><th>Ghi chú</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="10">Không có dữ liệu theo bộ lọc hiện tại</td></tr>'}</tbody></table>`;
     downloadBlob(`So-vay-von_${todayStr()}.doc`, htmlToWordDoc('Sổ vay vốn', html), 'application/msword');
   }
@@ -442,7 +492,7 @@
     return `
       <div class="print-header">
         <div class="print-header-left">
-          <div><b>HỘI NÔNG DÂN XÃ ${(cfg.wardName||'...').toUpperCase()}</b></div>
+          <div><b>${cfg.wardName ? hoiNongDanTitle() : `HỘI NÔNG DÂN ${adminLevelLabel().toUpperCase()} ...`}</b></div>
           <div>BAN CHẤP HÀNH</div>
         </div>
         <div class="print-header-right">
@@ -453,31 +503,31 @@
       </div>
       <h2 class="print-title">BÁO CÁO TÌNH HÌNH VAY VỐN VÀ QUYẾT TOÁN THU - CHI TÀI CHÍNH<br>${periodLabel} / NĂM ${year}</h2>
 
-      <div class="print-sec">I. Tình hình vay vốn toàn xã</div>
+      <div class="print-sec">I. Tình hình vay vốn toàn ${adminLevelLabelLower()}</div>
       <table class="print-table">
         <tr><td>Tổng số phương án vay đang hoạt động</td><td>${ov.activeCount}</td></tr>
         <tr><td>Tổng số phương án vay đã tất toán</td><td>${ov.settledCount}</td></tr>
-        <tr><td>Tổng số hộ đang dư nợ toàn xã</td><td>${ov.totalBorrowers}</td></tr>
-        <tr><td>Tổng dư nợ gốc toàn xã</td><td>${money(ov.totalOutstanding)}</td></tr>
+        <tr><td>Tổng số hộ đang dư nợ toàn ${adminLevelLabelLower()}</td><td>${ov.totalBorrowers}</td></tr>
+        <tr><td>Tổng dư nợ gốc toàn ${adminLevelLabelLower()}</td><td>${money(ov.totalOutstanding)}</td></tr>
       </table>
       <table class="print-table">
-        <thead><tr><th>Phương án vay</th><th>Ấp</th><th>Phát vay</th><th>Đã thu hồi</th><th>Dư nợ còn lại</th><th>Trạng thái</th></tr></thead>
+        <thead><tr><th>Phương án vay</th><th>${subAdminLabel()}</th><th>Phát vay</th><th>Đã thu hồi</th><th>Dư nợ còn lại</th><th>Trạng thái</th></tr></thead>
         <tbody>${ov.list.length? ov.list.map(p=>`<tr><td>${p.name}</td><td>${p.hamlets}</td><td>${money(p.disbursed)}</td><td>${money(p.recovered)}</td><td>${money(p.outstanding)}</td><td>${p.status}</td></tr>`).join('') : '<tr><td colspan="6">Chưa có dữ liệu</td></tr>'}</tbody>
       </table>
 
       <div class="print-sec">II. Quyết toán Thu - Chi tài chính kỳ ${fmtDate(from)} → ${fmtDate(to)}</div>
       <table class="print-table">
-        <tr><td>Tổng số tiền lãi đã thu (toàn xã)</td><td>${money(acct.thu)}</td></tr>
-        <tr><td>Các ấp giữ lại (${retain}%)</td><td>${money(acct.giuLaiAp)}</td></tr>
-        <tr><td>Xã được giữ lại (${100-retain}%)</td><td>${money(acct.xaNhan)}</td></tr>
-        <tr><td>Chi về cho các khu dân cư / ấp</td><td>${money(acct.chiByCategory[CAT_HAMLET]||0)}</td></tr>
+        <tr><td>Tổng số tiền lãi đã thu (toàn ${adminLevelLabelLower()})</td><td>${money(acct.thu)}</td></tr>
+        <tr><td>Các ${subAdminLabelLower()} giữ lại (${retain}%)</td><td>${money(acct.giuLaiAp)}</td></tr>
+        <tr><td>${adminLevelLabel()} được giữ lại (${100-retain}%)</td><td>${money(acct.xaNhan)}</td></tr>
+        <tr><td>Chi về cho các ${subAdminLabelLower()}</td><td>${money(acct.chiByCategory[CAT_HAMLET]||0)}</td></tr>
         <tr><td>Chi họp hành / hội nghị</td><td>${money(acct.chiByCategory[CAT_MEETING]||0)}</td></tr>
         <tr><td>Chi mua văn phòng phẩm</td><td>${money(acct.chiByCategory[CAT_SUPPLIES]||0)}</td></tr>
         <tr><td>Chi công tác tập huấn</td><td>${money(acct.chiByCategory[CAT_TRAINING]||0)}</td></tr>
         <tr><td>Chi bồi dưỡng cán bộ hoạt động quỹ</td><td>${money(acct.chiByCategory[CAT_BONUS]||0)}</td></tr>
         <tr><td>Chi khác</td><td>${money(otherTotal)}</td></tr>
         <tr><td><b>Tổng cộng đã chi</b></td><td><b>${money(acct.chiTotal)}</b></td></tr>
-        <tr><td><b>Số dư tồn quỹ Xã còn lại</b></td><td><b>${money(acct.tonQuy)}</b></td></tr>
+        <tr><td><b>Số dư tồn quỹ ${adminLevelLabel()} còn lại</b></td><td><b>${money(acct.tonQuy)}</b></td></tr>
       </table>
 
       <div class="print-signdate">${cfg.wardName? cfg.wardName+', ':''}ngày ${now.getDate()} tháng ${now.getMonth()+1} năm ${now.getFullYear()}</div>
@@ -517,7 +567,7 @@
       const text = await file.text();
       const data = JSON.parse(text);
       if(!data || !data.config || !Array.isArray(data.borrowers)){ alert('File sao lưu không hợp lệ hoặc không đúng định dạng.'); return; }
-      if(!confirm(`Khôi phục sẽ GHI ĐÈ toàn bộ dữ liệu hiện tại của Xã "${wardId()}" trên đám mây (hộ vay, chi tiêu, cấu hình, nhật ký, thùng rác) bằng dữ liệu trong file sao lưu. Bạn có chắc chắn muốn tiếp tục?`)) return;
+      if(!confirm(`Khôi phục sẽ GHI ĐÈ toàn bộ dữ liệu hiện tại của ${adminLevelLabel()} "${wardId()}" trên đám mây (hộ vay, chi tiêu, cấu hình, nhật ký, thùng rác) bằng dữ liệu trong file sao lưu. Bạn có chắc chắn muốn tiếp tục?`)) return;
       await cSet('config', data.config);
       await cSet('borrowers', byId(data.borrowers||[]));
       await cSet('expenses', byId(data.expenses||[]));
@@ -533,13 +583,31 @@
   }
 
   // ---------- expense categories (Chi tiêu xã) ----------
-  const CAT_HAMLET = 'Trích về cho các khu dân cư/Ấp';
-  const CAT_MEETING = 'Chi họp hành / Hội nghị';
-  const CAT_SUPPLIES = 'Mua văn phòng phẩm';
-  const CAT_TRAINING = 'Chi công tác tập huấn';
-  const CAT_BONUS = 'Chi bồi dưỡng cán bộ hoạt động quỹ';
-  const CAT_OTHER = 'Chi khác';
+  // Dùng KHOÁ nội bộ ổn định (không chứa danh xưng địa phương) để lưu trữ dữ liệu;
+  // nhãn hiển thị (label) được suy ra động theo danh xưng đã cấu hình.
+  const CAT_HAMLET = 'CAT_HAMLET_ALLOC';
+  const CAT_MEETING = 'CAT_MEETING';
+  const CAT_SUPPLIES = 'CAT_SUPPLIES';
+  const CAT_TRAINING = 'CAT_TRAINING';
+  const CAT_BONUS = 'CAT_BONUS';
+  const CAT_OTHER = 'CAT_OTHER';
   const EXPENSE_CATEGORIES = [CAT_HAMLET, CAT_MEETING, CAT_SUPPLIES, CAT_TRAINING, CAT_BONUS, CAT_OTHER];
+  // Giá trị chữ Việt CŨ (bản trước khi có danh xưng động) — giữ lại để nhận diện
+  // dữ liệu đã lưu từ trước, tránh mất/lệch dữ liệu cũ khi nâng cấp phần mềm.
+  const LEGACY_CAT_HAMLET = 'Trích về cho các khu dân cư/Ấp';
+  function isCatHamlet(purpose){ return purpose===CAT_HAMLET || purpose===LEGACY_CAT_HAMLET; }
+  // Nhãn hiển thị động cho từng mục đích chi — dùng cho giao diện & file xuất
+  function categoryLabel(cat){
+    if(isCatHamlet(cat)) return `Trích về cho các ${subAdminLabelLower()}`;
+    switch(cat){
+      case CAT_MEETING: return 'Chi họp hành / Hội nghị';
+      case CAT_SUPPLIES: return 'Mua văn phòng phẩm';
+      case CAT_TRAINING: return 'Chi công tác tập huấn';
+      case CAT_BONUS: return 'Chi bồi dưỡng cán bộ hoạt động quỹ';
+      case CAT_OTHER: return 'Chi khác';
+      default: return cat;
+    }
+  }
 
   // ---------- app state ----------
   let state = {
@@ -572,6 +640,48 @@
   }
   function canEdit(){ const r = myRole(); return r==='owner' || r==='editor'; }
   function isOwner(){ return myRole()==='owner'; }
+
+  // ---------- danh xưng hành chính động (Xã/Phường, Ấp/Khu phố/Thôn...) ----------
+  // Mọi nơi trong giao diện, biểu mẫu, và file xuất (Excel/Word/PDF/In) đều PHẢI
+  // lấy danh xưng qua các hàm dưới đây — tuyệt đối không viết chết chữ "Xã"/"Ấp".
+  const ADMIN_LEVEL_OPTIONS = ['Xã', 'Phường'];
+  const SUB_ADMIN_OPTIONS = ['Khu dân cư', 'Ấp', 'Thôn', 'Khu phố', 'Xóm', 'Tổ', 'Khác'];
+
+  // Cấp quản lý: "Xã" hoặc "Phường" (mặc định "Xã" nếu chưa cấu hình)
+  function adminLevelLabel(){
+    const v = state.config && state.config.adminLevel;
+    return ADMIN_LEVEL_OPTIONS.includes(v) ? v : 'Xã';
+  }
+  // Cấp cơ sở trực thuộc: "Ấp"/"Khu phố"/"Thôn"/... hoặc tên tự điền khi chọn "Khác"
+  function subAdminLabel(){
+    const cfg = state.config||{};
+    const t = SUB_ADMIN_OPTIONS.includes(cfg.subAdminType) ? cfg.subAdminType : 'Ấp';
+    if(t === 'Khác'){
+      const custom = (cfg.subAdminCustom||'').trim();
+      return custom || 'Khu dân cư';
+    }
+    return t;
+  }
+  function subAdminLabelLower(){ return subAdminLabel().toLowerCase(); }
+  // "Xã Hưng Phước" / "Phường Bình Minh"
+  function wardTitle(){
+    const name = ((state.config && state.config.wardName)||'').trim();
+    return name ? `${adminLevelLabel()} ${name}` : '';
+  }
+  function wardTitleUpper(){ return wardTitle().toUpperCase(); }
+  // "HỘI NÔNG DÂN XÃ HƯNG PHƯỚC" / "HỘI NÔNG DÂN PHƯỜNG BÌNH MINH"
+  function hoiNongDanTitle(){
+    const t = wardTitleUpper();
+    return t ? `HỘI NÔNG DÂN ${t}` : 'HỘI NÔNG DÂN';
+  }
+  // "Hội Nông dân Xã Hưng Phước" (không viết hoa toàn bộ — dùng trong câu văn thường)
+  function hoiNongDanNatural(){
+    const t = wardTitle();
+    return t ? `Hội Nông dân ${t}` : 'Hội Nông dân';
+  }
+  function adminLevelLabelLower(){ return adminLevelLabel().toLowerCase(); }
+  // "Danh sách các khu phố" / "Danh sách các ấp"
+  function subAdminListLabel(){ return `Danh sách các ${subAdminLabelLower()}`; }
 
   async function pushLog(action, target){
     const entry = { id:uid(), time:new Date().toISOString(), user: state.identity.email, userName: state.identity.name, action, target };
@@ -729,9 +839,9 @@
     const chiByCategory = {};
     const chiByHamlet = {};
     activeExpenses.forEach(e=>{
-      const label = e.purpose===CAT_OTHER ? `${CAT_OTHER}: ${e.purposeOther||'(chưa ghi rõ)'}` : e.purpose;
+      const label = e.purpose===CAT_OTHER ? `${CAT_OTHER}: ${e.purposeOther||'(chưa ghi rõ)'}` : (isCatHamlet(e.purpose) ? CAT_HAMLET : e.purpose);
       chiByCategory[label] = (chiByCategory[label]||0) + (parseFloat(e.amount)||0);
-      if(e.purpose===CAT_HAMLET){
+      if(isCatHamlet(e.purpose)){
         const h = e.hamlet || '—';
         chiByHamlet[h] = (chiByHamlet[h]||0) + (parseFloat(e.amount)||0);
       }
@@ -793,13 +903,13 @@
       <div class="center-screen">
         <div class="auth-card">
           <div class="rice-badge">🌾</div>
-          <h1>Quản lý Công tác Hội Nông dân cấp xã</h1>
-          <p class="sub">Đăng nhập bằng tài khoản Google để quản lý quỹ hỗ trợ nông dân, thu chi nội bộ, vốn vay, lãi suất và báo cáo địa phương</p>
+          <h1>Quản lý Công tác Hội Nông dân cấp xã/phường</h1>
+          <p class="sub">Đăng nhập để quản lý công tác hội, thực lực hội, hội viên, quỹ hỗ trợ nông dân, thu chi nội bộ, vốn vay, lãi suất và báo cáo địa phương</p>
           <button class="btn btn-gold btn-block" id="li-btn">🔒 Đăng nhập bằng Google</button>
           <p class="sub" style="margin-top:16px; font-size:11.5px;">
             Hệ thống lấy Họ tên &amp; Email trực tiếp từ tài khoản Google đã xác thực (không gõ tay).
             Quyền truy cập — Chủ tài khoản / Cộng tác viên (sửa) / Chỉ xem — được cấp sẵn theo đúng địa chỉ email
-            trong mục Cài đặt &amp; Chia sẻ của từng Xã.
+            trong mục Cài đặt &amp; Chia sẻ của từng địa phương.
           </p>
         </div>
       </div>`;
@@ -830,12 +940,12 @@
           <h1>Xin chào, ${idn.name||idn.email}</h1>
           <p class="sub">Đã xác thực Google: <b>${idn.email}</b></p>
           <div class="field" style="text-align:left;">
-            <label>Mã định danh cấp Xã *</label>
+            <label>Mã định danh cấp Xã/Phường *</label>
             <input id="wi-wardid" placeholder="vd: xabinhminh" style="text-transform:lowercase;">
           </div>
           <p class="sub" style="margin-top:-8px; margin-bottom:16px; font-size:11.5px; text-align:left;">
             Chỉ gồm chữ thường không dấu, số, gạch dưới/gạch ngang. Chủ tịch Hội tự đặt mã này khi thiết lập lần đầu
-            cho Xã; các cán bộ khác (Phó Chủ tịch, cán bộ Ấp/Thôn/Khu phố...) nhập <b>đúng mã Xã đã được cung cấp</b>
+            cho địa phương; các cán bộ khác (Phó Chủ tịch, cán bộ cấp cơ sở...) nhập <b>đúng mã đã được cung cấp</b>
             để vào chung một cơ sở dữ liệu — quyền hạn của từng người sẽ tự áp dụng theo đúng email Google vừa đăng nhập.
           </p>
           <button class="btn btn-primary btn-block" id="wi-continue">Tiếp tục</button>
@@ -844,7 +954,7 @@
       </div>`;
     document.getElementById('wi-continue').onclick = async ()=>{
       const wid = document.getElementById('wi-wardid').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
-      if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh cấp Xã hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return; }
+      if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return; }
       state.identity = {...state.identity, wardId: wid};
       lset(wardIdMapKey(state.identity.email), wid);
       lset(IDENTITY_KEY, state.identity);
@@ -853,11 +963,20 @@
     document.getElementById('wi-logout').onclick = async ()=>{ await auth.signOut(); };
   }
 
+  // Nhãn "Danh sách các ..." dùng ngay tại màn hình thiết lập lần đầu (trước khi state.config tồn tại)
+  function subAdminListLabelLocal(subType, customVal){
+    const t = SUB_ADMIN_OPTIONS.includes(subType) ? subType : 'Ấp';
+    const label = t==='Khác' ? ((customVal||'').trim()||'Đơn vị') : t;
+    return `Danh sách các ${label.toLowerCase()}`;
+  }
+
   function renderOnboarding(){
     const cfg = state.config || { hamlets:[], projects:[], quarters:{
       q1:{label:'Quý 1', start:'2026-01-01', end:'2026-03-31'}, q2:{label:'Quý 2', start:'2026-04-01', end:'2026-06-30'},
       q3:{label:'Quý 3', start:'2026-07-01', end:'2026-09-30'}, q4:{label:'Quý 4', start:'2026-10-01', end:'2026-12-31'}
-    }, retainPercent:30, wardName:'', ownerEmail: state.identity.email, officerTitle:'' };
+    }, retainPercent:30, wardName:'', adminLevel:'Xã', subAdminType:'Ấp', subAdminCustom:'', ownerEmail: state.identity.email, officerTitle:'' };
+    const curLevel = ADMIN_LEVEL_OPTIONS.includes(cfg.adminLevel) ? cfg.adminLevel : 'Xã';
+    const curSub = SUB_ADMIN_OPTIONS.includes(cfg.subAdminType) ? cfg.subAdminType : 'Ấp';
     root.innerHTML = `
       <div class="center-screen">
         <div class="auth-card" style="max-width:640px; text-align:left;">
@@ -865,20 +984,31 @@
           <h1 style="text-align:left;">Thiết lập cơ sở dữ liệu lõi</h1>
           <p class="sub" style="text-align:left;">Thiết lập lần đầu cho địa phương — có thể chỉnh sửa lại sau trong mục Cài đặt.</p>
 
+          <div class="divider-lbl">Loại hình hành chính</div>
           <div class="form-grid">
-            <div class="field"><label>Chức vụ cán bộ</label><input id="ob-title" placeholder="Chủ tịch Hội Nông dân xã..." value="${cfg.officerTitle||''}"></div>
-            <div class="field"><label>Xã / Phường / Thị trấn</label><input id="ob-ward" placeholder="Xã Bình Minh" value="${cfg.wardName||''}"></div>
+            <div class="field"><label>Cấp quản lý *</label>
+              <select id="ob-adminlevel">${ADMIN_LEVEL_OPTIONS.map(o=>`<option value="${o}" ${curLevel===o?'selected':''}>${o}</option>`).join('')}</select>
+            </div>
+            <div class="field"><label id="ob-ward-label">Tên riêng (${curLevel})</label><input id="ob-ward" placeholder="Ví dụ: Hưng Phước, Bình Minh..." value="${cfg.wardName||''}"></div>
+            <div class="field"><label>Cấp cơ sở trực thuộc *</label>
+              <select id="ob-subadmin">${SUB_ADMIN_OPTIONS.map(o=>`<option value="${o}" ${curSub===o?'selected':''}>${o}</option>`).join('')}</select>
+            </div>
+            <div class="field" id="ob-subadmin-custom-wrap" style="${curSub==='Khác'?'':'display:none;'}">
+              <label>Tên gọi khác (tự điền) *</label>
+              <input id="ob-subadmin-custom" placeholder="Ví dụ: Buôn, Bản, Sóc..." value="${cfg.subAdminCustom||''}">
+            </div>
+            <div class="field"><label>Chức vụ cán bộ</label><input id="ob-title" placeholder="Chủ tịch Hội Nông dân..." value="${cfg.officerTitle||''}"></div>
             <div class="field full">
-              <label>Mã định danh cấp Xã (đường dẫn lưu dữ liệu trên đám mây) *</label>
+              <label>Mã định danh cấp Xã/Phường (đường dẫn lưu dữ liệu trên đám mây) *</label>
               <input id="ob-wardid" placeholder="vd: xabinhminh" value="${state.identity.wardId||''}" style="text-transform:lowercase;">
               <p class="sub" style="margin:4px 0 0; font-size:11.5px;">
-                Dữ liệu sẽ lưu tại <span class="mono">data/${state.identity.wardId||'...'}/...</span> trên Firebase. Hãy cung cấp đúng mã này cho các cán bộ Ấp khác để họ đăng nhập vào chung dữ liệu của Xã. Chỉ gồm chữ thường, số, gạch dưới/gạch ngang.
+                Dữ liệu sẽ lưu tại <span class="mono">data/${state.identity.wardId||'...'}/...</span> trên Firebase. Hãy cung cấp đúng mã này cho các cán bộ khác để họ đăng nhập vào chung dữ liệu. Chỉ gồm chữ thường, số, gạch dưới/gạch ngang.
               </p>
             </div>
           </div>
 
-          <div class="divider-lbl">Khu dân cư (ấp / thôn / khu phố / xóm)</div>
-          <div class="field"><textarea id="ob-hamlets" rows="2" placeholder="Ấp 1, Ấp 2, Ấp 3...">${(cfg.hamlets||[]).join(', ')}</textarea></div>
+          <div class="divider-lbl" id="ob-hamlets-divider">${subAdminListLabelLocal(curSub, cfg.subAdminCustom)}</div>
+          <div class="field"><textarea id="ob-hamlets" rows="2" placeholder="${curSub} 1, ${curSub} 2, ${curSub} 3...">${(cfg.hamlets||[]).join(', ')}</textarea></div>
           <p class="sub" style="margin:-6px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p>
 
           <div class="divider-lbl">Phương án vay vốn hiện hành</div>
@@ -897,22 +1027,48 @@
               </div>`).join('')}
           </div>
 
-          <div class="divider-lbl">Tỷ lệ giữ lại tại ấp</div>
-          <div class="field"><input type="number" id="ob-retain" value="${cfg.retainPercent}" min="0" max="100"> <span class="sub">% tổng lãi ấp thu được — phần còn lại nộp lên xã</span></div>
+          <div class="divider-lbl" id="ob-retain-divider">Tỷ lệ giữ lại tại ${curSub.toLowerCase()}</div>
+          <div class="field"><input type="number" id="ob-retain" value="${cfg.retainPercent}" min="0" max="100"> <span class="sub" id="ob-retain-sub">% tổng lãi ${curSub.toLowerCase()} thu được — phần còn lại nộp lên ${curLevel.toLowerCase()}</span></div>
 
           <button class="btn btn-primary btn-block" id="ob-save" style="margin-top:8px;">Hoàn tất thiết lập</button>
         </div>
       </div>`;
+
+    // ---- cập nhật động các nhãn/placeholder khi người dùng đổi cấu hình danh xưng ----
+    function currentSubLabel(){
+      const t = document.getElementById('ob-subadmin').value;
+      if(t==='Khác'){ const c=(document.getElementById('ob-subadmin-custom').value||'').trim(); return c || 'Đơn vị'; }
+      return t;
+    }
+    function refreshAdminLabels(){
+      const level = document.getElementById('ob-adminlevel').value;
+      const sub = currentSubLabel();
+      document.getElementById('ob-subadmin-custom-wrap').style.display = document.getElementById('ob-subadmin').value==='Khác' ? '' : 'none';
+      document.getElementById('ob-ward-label').textContent = `Tên riêng (${level})`;
+      document.getElementById('ob-hamlets-divider').textContent = `Danh sách các ${sub.toLowerCase()}`;
+      document.getElementById('ob-hamlets').placeholder = `${sub} 1, ${sub} 2, ${sub} 3...`;
+      document.getElementById('ob-retain-divider').textContent = `Tỷ lệ giữ lại tại ${sub.toLowerCase()}`;
+      document.getElementById('ob-retain-sub').textContent = `% tổng lãi ${sub.toLowerCase()} thu được — phần còn lại nộp lên ${level.toLowerCase()}`;
+    }
+    document.getElementById('ob-adminlevel').onchange = refreshAdminLabels;
+    document.getElementById('ob-subadmin').onchange = refreshAdminLabels;
+    document.getElementById('ob-subadmin-custom').oninput = refreshAdminLabels;
+
     document.getElementById('ob-save').onclick = async ()=>{
       const wid = document.getElementById('ob-wardid').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
-      if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh cấp Xã hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return; }
-      // Nếu đổi mã Xã so với lúc đăng nhập, cập nhật lại identity cục bộ (localStorage) trước khi ghi lên Firebase
+      if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return; }
+      const subAdminType = document.getElementById('ob-subadmin').value;
+      const subAdminCustom = document.getElementById('ob-subadmin-custom').value.trim();
+      if(subAdminType==='Khác' && !subAdminCustom){ alert('Vui lòng nhập tên gọi khác cho cấp cơ sở trực thuộc.'); return; }
+      // Nếu đổi mã so với lúc đăng nhập, cập nhật lại identity cục bộ (localStorage) trước khi ghi lên Firebase
       if(wid !== state.identity.wardId){
         state.identity = {...state.identity, wardId: wid};
         lset(IDENTITY_KEY, state.identity);
       }
       const newCfg = {
         wardName: document.getElementById('ob-ward').value.trim(),
+        adminLevel: document.getElementById('ob-adminlevel').value,
+        subAdminType, subAdminCustom,
         officerTitle: document.getElementById('ob-title').value.trim(),
         hamlets: document.getElementById('ob-hamlets').value.split(',').map(s=>s.trim()).filter(Boolean),
         projects: document.getElementById('ob-projects').value.split(',').map(s=>s.trim()).filter(Boolean),
@@ -940,7 +1096,7 @@
     return [
       {id:'dashboard', ico:'📊', label:'Tổng quan'},
       {id:'data', ico:'📋', label:'Sổ vay vốn'},
-      {id:'expenses', ico:'💰', label:'Chi tiêu & Hạch toán Xã'},
+      {id:'expenses', ico:'💰', label:`Chi tiêu & Hạch toán ${adminLevelLabel()}`},
       {id:'reports', ico:'🧾', label:'Báo cáo lãi'},
       {id:'internal', ico:'🔒', label:'Thu – Chi nội bộ'},
       {id:'members', ico:'🪪', label:'Hồ sơ hội viên'},
@@ -959,7 +1115,7 @@
     root.innerHTML = `
       <div class="app-shell">
         <div class="sidebar">
-          <div class="brand"><div class="ico">🌾</div><div class="txt">Hội Nông dân<small>${state.config.wardName||''}</small></div></div>
+          <div class="brand"><div class="ico">🌾</div><div class="txt">Hội Nông dân<small>${wardTitle()}</small></div></div>
           ${navItems().map(n=>`
             <button class="nav-item ${state.activeTab===n.id?'active':''}" data-tab="${n.id}">
               <span>${n.ico}</span><span>${n.label}</span>
@@ -971,7 +1127,7 @@
         </div>
         <div class="main">
           <div class="topbar">
-            <div><h2>${navItems().find(n=>n.id===state.activeTab).label}</h2><div class="sub">${state.config.wardName||'Chưa đặt tên xã'} · ${state.borrowers.filter(b=>!b.deleted).length} hộ vay đang theo dõi</div></div>
+            <div><h2>${navItems().find(n=>n.id===state.activeTab).label}</h2><div class="sub">${wardTitle()||`Chưa đặt tên ${adminLevelLabelLower()}`} · ${state.borrowers.filter(b=>!b.deleted).length} hộ vay đang theo dõi</div></div>
             <div class="top-actions">
               <button class="bell-btn" id="bell-btn">🔔${alerts.length?`<span class="bell-dot"></span>`:''}</button>
               <div class="avatar" ${state.identity.photo?`style="background-image:url('${state.identity.photo}'); background-size:cover; background-position:center;"`:''}>${state.identity.photo?'':(state.identity.name||'?')[0].toUpperCase()}</div>
@@ -1041,7 +1197,7 @@
         <div class="panel-body">
           <div class="kv-row"><span>Tổng số hộ vay đang theo dõi</span><b>${active.length}</b></div>
           <div class="kv-row"><span>Tổng dư nợ gốc</span><b>${money(totalPrincipal)}</b></div>
-          <div class="kv-row"><span>Số ấp / khu dân cư</span><b>${(state.config.hamlets||[]).length}</b></div>
+          <div class="kv-row"><span>Số ${subAdminLabelLower()}</span><b>${(state.config.hamlets||[]).length}</b></div>
           <div class="kv-row"><span>Số phương án vay vốn</span><b>${(state.config.projects||[]).length}</b></div>
         </div>
       </div>
@@ -1070,7 +1226,7 @@
     el.innerHTML = `
       <div class="toolbar">
         <input id="f-search" placeholder="🔎 Tìm theo tên, CCCD, SĐT..." value="${state.search}" style="min-width:220px;">
-        <select id="f-hamlet"><option value="">Tất cả ấp</option>${hamlets.map(h=>`<option ${state.filterHamlet===h?'selected':''}>${h}</option>`).join('')}</select>
+        <select id="f-hamlet"><option value="">Tất cả ${subAdminLabelLower()}</option>${hamlets.map(h=>`<option ${state.filterHamlet===h?'selected':''}>${h}</option>`).join('')}</select>
         <select id="f-project"><option value="">Tất cả phương án vay</option>${projects.map(p=>`<option ${state.filterProject===p?'selected':''}>${p}</option>`).join('')}</select>
         <div class="spacer"></div>
         <button class="btn btn-ghost btn-sm" id="exp-excel-btn">⬇️ Xuất file Excel Sổ Vay Vốn</button>
@@ -1080,7 +1236,7 @@
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th></th><th>Họ tên</th><th>Ấp</th><th>Phương án vay</th><th>Gốc</th><th>Lãi suất</th><th>Ngày vay</th><th>Đến hạn</th>
+            <th></th><th>Họ tên</th><th>${subAdminLabel()}</th><th>Phương án vay</th><th>Gốc</th><th>Lãi suất</th><th>Ngày vay</th><th>Đến hạn</th>
             <th>Trạng thái gốc</th><th>Trạng thái lãi (kỳ hiện chọn)</th><th></th>
           </tr></thead>
           <tbody>
@@ -1165,37 +1321,37 @@
       <div class="grid3">
         <div class="stat-card" style="background:linear-gradient(135deg,var(--rice),var(--rice-dark));">
           <div class="num mono">${money(acct.xaNhan)}</div>
-          <div class="lbl">Tổng lãi trích về cho Xã</div>
-          <div class="sub">= Tổng lãi thu được × (100% − ${state.config.retainPercent||0}% ấp giữ lại)</div>
+          <div class="lbl">Tổng lãi trích về cho ${adminLevelLabel()}</div>
+          <div class="sub">= Tổng lãi thu được × (100% − ${state.config.retainPercent||0}% ${subAdminLabelLower()} giữ lại)</div>
         </div>
         <div class="stat-card" style="background:linear-gradient(135deg,var(--clay),#7d3813);">
           <div class="num mono">${money(acct.chiTotal)}</div>
-          <div class="lbl">Tổng số tiền Xã đã chi</div>
+          <div class="lbl">Tổng số tiền ${adminLevelLabel()} đã chi</div>
           <div class="sub">Cộng dồn từ các khoản chi trong kỳ</div>
         </div>
         <div class="stat-card" style="background:linear-gradient(135deg,${acct.tonQuy>=0?'var(--green)':'var(--red)'},${acct.tonQuy>=0?'#2f4f34':'#7a231d'});">
           <div class="num mono">${money(acct.tonQuy)}</div>
-          <div class="lbl">Tồn quỹ Xã</div>
+          <div class="lbl">Tồn quỹ ${adminLevelLabel()}</div>
           <div class="sub">= Tổng nhận về − Tổng đã chi</div>
         </div>
       </div>
 
       <div class="toolbar">
-        <input id="e-search" placeholder="🔎 Tìm theo ghi chú, ấp..." value="${state.expSearch}" style="min-width:220px;">
-        <select id="e-cat"><option value="">Tất cả mục đích chi</option>${EXPENSE_CATEGORIES.map(c=>`<option ${state.expFilterCat===c?'selected':''}>${c}</option>`).join('')}</select>
+        <input id="e-search" placeholder="🔎 Tìm theo ghi chú, ${subAdminLabelLower()}..." value="${state.expSearch}" style="min-width:220px;">
+        <select id="e-cat"><option value="">Tất cả mục đích chi</option>${EXPENSE_CATEGORIES.map(c=>`<option value="${c}" ${state.expFilterCat===c?'selected':''}>${categoryLabel(c)}</option>`).join('')}</select>
         <div class="spacer"></div>
         ${canEdit()? `<button class="btn btn-primary" id="add-exp-btn">+ Thêm khoản chi mới</button>` : ''}
       </div>
 
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Ngày chi</th><th>Nội dung / Mục đích</th><th>Địa bàn (Ấp)</th><th>Số tiền</th><th>Ghi chú</th><th></th></tr></thead>
+          <thead><tr><th>Ngày chi</th><th>Nội dung / Mục đích</th><th>Địa bàn (${subAdminLabel()})</th><th>Số tiền</th><th>Ghi chú</th><th></th></tr></thead>
           <tbody>
             ${list.length? list.map(e=>`
               <tr>
                 <td>${fmtDate(e.date)}</td>
-                <td>${e.purpose===CAT_OTHER? `${CAT_OTHER}: ${e.purposeOther||''}` : e.purpose}</td>
-                <td>${e.purpose===CAT_HAMLET? (e.hamlet||'—') : '—'}</td>
+                <td>${e.purpose===CAT_OTHER? `${categoryLabel(CAT_OTHER)}: ${e.purposeOther||''}` : categoryLabel(e.purpose)}</td>
+                <td>${isCatHamlet(e.purpose)? (e.hamlet||'—') : '—'}</td>
                 <td class="money">${money(e.amount)}</td>
                 <td>${e.note||'—'}</td>
                 <td><button class="btn btn-ghost btn-sm" data-view-exp="${e.id}">Xem/Sửa</button></td>
@@ -1217,6 +1373,7 @@
   function renderExpenseModal(){
     const isNew = !state.modal.payload;
     const e0 = state.modal.payload ? {...state.modal.payload} : emptyExpense();
+    if(isCatHamlet(e0.purpose)) e0.purpose = CAT_HAMLET; // chuẩn hoá dữ liệu cũ (chữ Việt) về khoá nội bộ mới
     const hamlets = state.config.hamlets||[];
     const readonly = !canEdit();
     const wrap = document.createElement('div');
@@ -1229,10 +1386,10 @@
             <div class="field"><label>Ngày chi *</label><input type="date" id="em-date" value="${e0.date}" ${readonly?'disabled':''}></div>
             <div class="field"><label>Số tiền chi (đ) *</label><input type="number" id="em-amount" value="${e0.amount}" ${readonly?'disabled':''}></div>
             <div class="field full"><label>Nội dung công việc / Mục đích chi *</label>
-              <select id="em-purpose" ${readonly?'disabled':''}>${EXPENSE_CATEGORIES.map(c=>`<option ${e0.purpose===c?'selected':''}>${c}</option>`).join('')}</select>
+              <select id="em-purpose" ${readonly?'disabled':''}>${EXPENSE_CATEGORIES.map(c=>`<option value="${c}" ${e0.purpose===c?'selected':''}>${categoryLabel(c)}</option>`).join('')}</select>
             </div>
-            <div class="field full" id="em-hamlet-wrap" style="${e0.purpose===CAT_HAMLET?'':'display:none;'}">
-              <label>Trích về cho khu dân cư (Ấp) nào *</label>
+            <div class="field full" id="em-hamlet-wrap" style="${isCatHamlet(e0.purpose)?'':'display:none;'}">
+              <label>Trích về cho ${subAdminLabelLower()} nào *</label>
               <select id="em-hamlet" ${readonly?'disabled':''}>${hamlets.map(h=>`<option ${e0.hamlet===h?'selected':''}>${h}</option>`).join('')}</select>
             </div>
             <div class="field full" id="em-other-wrap" style="${e0.purpose===CAT_OTHER?'':'display:none;'}">
@@ -1256,7 +1413,7 @@
 
     const purposeSel = wrap.querySelector('#em-purpose');
     purposeSel.onchange = ()=>{
-      wrap.querySelector('#em-hamlet-wrap').style.display = purposeSel.value===CAT_HAMLET ? '' : 'none';
+      wrap.querySelector('#em-hamlet-wrap').style.display = isCatHamlet(purposeSel.value) ? '' : 'none';
       wrap.querySelector('#em-other-wrap').style.display = purposeSel.value===CAT_OTHER ? '' : 'none';
     };
 
@@ -1268,7 +1425,7 @@
       state.trash.push(trashed);
       await cRemoveRecord('expenses', e0.id);
       await cSetRecord('trash', trashed.id, trashed);
-      await pushLog('xoá khoản chi', `${money(e0.amount)} — ${e0.purpose}`);
+      await pushLog('xoá khoản chi', `${money(e0.amount)} — ${categoryLabel(e0.purpose)}`);
       close(); render();
     };
 
@@ -1282,13 +1439,13 @@
       const note = wrap.querySelector('#em-note').value.trim();
       if(!date){ alert('Vui lòng chọn ngày chi.'); return; }
       if(!amount || amount<=0){ alert('Vui lòng nhập số tiền chi hợp lệ.'); return; }
-      if(purpose===CAT_HAMLET && !hamlet){ alert('Vui lòng chọn ấp nhận tiền.'); return; }
+      if(isCatHamlet(purpose) && !hamlet){ alert(`Vui lòng chọn ${subAdminLabelLower()} nhận tiền.`); return; }
       if(purpose===CAT_OTHER && !purposeOther){ alert('Vui lòng ghi rõ nội dung mục chi khác.'); return; }
-      const updated = { ...e0, date, amount, purpose, hamlet: purpose===CAT_HAMLET?hamlet:'', purposeOther: purpose===CAT_OTHER?purposeOther:'', note };
+      const updated = { ...e0, date, amount, purpose, hamlet: isCatHamlet(purpose)?hamlet:'', purposeOther: purpose===CAT_OTHER?purposeOther:'', note };
       if(isNew){ state.expenses.push(updated); }
       else { state.expenses = state.expenses.map(x=>x.id===updated.id? updated : x); }
       await cSetRecord('expenses', updated.id, updated);
-      await pushLog(isNew?'thêm khoản chi':'chỉnh sửa khoản chi', `${money(updated.amount)} — ${updated.purpose}`);
+      await pushLog(isNew?'thêm khoản chi':'chỉnh sửa khoản chi', `${money(updated.amount)} — ${categoryLabel(updated.purpose)}`);
       close(); render();
     };
   }
@@ -1312,17 +1469,17 @@
 
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head"><h3>📊 Báo cáo tình hình vay vốn toàn xã</h3></div>
+        <div class="panel-head"><h3>📊 Báo cáo tình hình vay vốn toàn ${adminLevelLabelLower()}</h3></div>
         <div class="panel-body">
           <div class="grid3" style="margin-bottom:16px;">
             <div class="stat-card stat-yellow"><div class="num mono">${ov.activeCount}</div><div class="lbl">Phương án vay đang hoạt động</div></div>
             <div class="stat-card" style="background:linear-gradient(135deg,var(--rice),var(--rice-dark));"><div class="num mono">${ov.settledCount}</div><div class="lbl">Phương án vay đã tất toán</div></div>
-            <div class="stat-card stat-orange"><div class="num mono">${ov.totalBorrowers}</div><div class="lbl">Hộ đang dư nợ toàn xã</div></div>
+            <div class="stat-card stat-orange"><div class="num mono">${ov.totalBorrowers}</div><div class="lbl">Hộ đang dư nợ toàn ${adminLevelLabelLower()}</div></div>
           </div>
-          <div class="kv-row"><span>Tổng số tiền dư nợ gốc toàn xã</span><b>${money(ov.totalOutstanding)}</b></div>
+          <div class="kv-row"><span>Tổng số tiền dư nợ gốc toàn ${adminLevelLabelLower()}</span><b>${money(ov.totalOutstanding)}</b></div>
           <div class="table-wrap" style="margin-top:12px;">
             <table>
-              <thead><tr><th>Phương án vay</th><th>Ấp</th><th>Phát vay ban đầu</th><th>Đã thu hồi gốc</th><th>Dư nợ còn lại</th><th>Trạng thái</th></tr></thead>
+              <thead><tr><th>Phương án vay</th><th>${subAdminLabel()}</th><th>Phát vay ban đầu</th><th>Đã thu hồi gốc</th><th>Dư nợ còn lại</th><th>Trạng thái</th></tr></thead>
               <tbody>
                 ${ov.list.length? ov.list.map(p=>`<tr><td>${p.name}</td><td>${p.hamlets}</td><td class="money">${money(p.disbursed)}</td><td class="money">${money(p.recovered)}</td><td class="money">${money(p.outstanding)}</td><td><span class="pill ${p.status==='Đang hoạt động'?'pill-orange':'pill-green'}">${p.status}</span></td></tr>`).join('') : `<tr><td colspan="6"><div class="empty-state">Chưa có dữ liệu phương án vay</div></td></tr>`}
               </tbody>
@@ -1355,10 +1512,10 @@
       </div>
 
       <div class="grid3">
-        <div class="panel" style="grid-column:span 1;"><div class="panel-head"><h3>Tổng lãi toàn xã</h3></div><div class="panel-body">
+        <div class="panel" style="grid-column:span 1;"><div class="panel-head"><h3>Tổng lãi toàn ${adminLevelLabelLower()}</h3></div><div class="panel-body">
           <div class="kv-row"><span>Tổng lãi phải đóng</span><b>${money(totalInterest)}</b></div>
-          <div class="kv-row"><span>Xã được nhận (${100-retain}%)</span><b>${money(totalInterest*(100-retain)/100)}</b></div>
-          <div class="kv-row"><span>Các ấp giữ lại (${retain}%)</span><b>${money(totalInterest*retain/100)}</b></div>
+          <div class="kv-row"><span>${adminLevelLabel()} được nhận (${100-retain}%)</span><b>${money(totalInterest*(100-retain)/100)}</b></div>
+          <div class="kv-row"><span>Các ${subAdminLabelLower()} giữ lại (${retain}%)</span><b>${money(totalInterest*retain/100)}</b></div>
         </div></div>
       </div>
 
@@ -1370,10 +1527,10 @@
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h3>Theo ấp — nộp xã / giữ lại</h3></div>
+        <div class="panel-head"><h3>Theo ${subAdminLabelLower()} — nộp ${adminLevelLabelLower()} / giữ lại</h3></div>
         <div class="panel-body">
           <div class="table-wrap"><table>
-            <thead><tr><th>Ấp</th><th>Tổng lãi</th><th>Giữ lại (${retain}%)</th><th>Nộp xã (${100-retain}%)</th></tr></thead>
+            <thead><tr><th>${subAdminLabel()}</th><th>Tổng lãi</th><th>Giữ lại (${retain}%)</th><th>Nộp ${adminLevelLabelLower()} (${100-retain}%)</th></tr></thead>
             <tbody>
               ${Object.keys(byHamlet).length? Object.entries(byHamlet).map(([k,v])=>`
                 <tr><td>${k}</td><td class="money">${money(v)}</td><td class="money">${money(v*retain/100)}</td><td class="money">${money(v*(100-retain)/100)}</td></tr>
@@ -1387,7 +1544,7 @@
         <div class="panel-head"><h3>Chi tiết lãi từng người</h3></div>
         <div class="panel-body">
           <div class="table-wrap"><table>
-            <thead><tr><th>Họ tên</th><th>Ấp</th><th>Phương án vay</th><th>Gốc</th><th>Số ngày</th><th>Lãi tính kỳ này</th><th>Dư kỳ trước</th><th>Tổng phải đóng</th><th>Trạng thái</th></tr></thead>
+            <thead><tr><th>Họ tên</th><th>${subAdminLabel()}</th><th>Phương án vay</th><th>Gốc</th><th>Số ngày</th><th>Lãi tính kỳ này</th><th>Dư kỳ trước</th><th>Tổng phải đóng</th><th>Trạng thái</th></tr></thead>
             <tbody>
               ${rows.length? rows.map(r=>{
                 const st = interestStatus(r.b, r.due);
@@ -1417,18 +1574,18 @@
     const otherEntries = Object.entries(acct.chiByCategory).filter(([k])=>k.startsWith(CAT_OTHER+':'));
     return `
       <div class="panel" style="border:1.5px solid var(--gold);">
-        <div class="panel-head"><h3>🧾 Báo cáo Thu – Chi Hạch toán Tài chính Xã</h3></div>
+        <div class="panel-head"><h3>🧾 Báo cáo Thu – Chi Hạch toán Tài chính ${adminLevelLabel()}</h3></div>
         <div class="panel-body">
           <div class="toolbar" style="margin-bottom:6px;">${acctPeriodSelectorHtml('acr')}</div>
           <div class="sub" style="margin-bottom:14px;">Kỳ báo cáo: <b>${fmtDate(from)} → ${fmtDate(to)}</b></div>
 
           <div class="divider-lbl">Phần Thu</div>
-          <div class="kv-row"><span>Tổng số tiền lãi đã thu (toàn xã, các phương án vay)</span><b>${money(acct.thu)}</b></div>
-          <div class="kv-row"><span>Số tiền nộp lên trên / các ấp giữ lại (${retain}%)</span><b>${money(acct.giuLaiAp)}</b></div>
-          <div class="kv-row"><span>Số tiền Xã được giữ lại (${100-retain}%)</span><b>${money(acct.xaNhan)}</b></div>
+          <div class="kv-row"><span>Tổng số tiền lãi đã thu (toàn ${adminLevelLabelLower()}, các phương án vay)</span><b>${money(acct.thu)}</b></div>
+          <div class="kv-row"><span>Số tiền nộp lên trên / các ${subAdminLabelLower()} giữ lại (${retain}%)</span><b>${money(acct.giuLaiAp)}</b></div>
+          <div class="kv-row"><span>Số tiền ${adminLevelLabel()} được giữ lại (${100-retain}%)</span><b>${money(acct.xaNhan)}</b></div>
 
           <div class="divider-lbl">Phần Chi (gộp theo nội dung công việc)</div>
-          <div class="kv-row"><span>Tổng tiền đã đưa về cho các khu dân cư</span><b>${money(acct.chiByCategory[CAT_HAMLET]||0)}</b></div>
+          <div class="kv-row"><span>Tổng tiền đã đưa về cho các ${subAdminLabelLower()}</span><b>${money(acct.chiByCategory[CAT_HAMLET]||0)}</b></div>
           ${Object.keys(acct.chiByHamlet).length? `
             <div style="margin:4px 0 10px 14px; padding-left:10px; border-left:2px solid var(--line);">
               ${Object.entries(acct.chiByHamlet).map(([h,v])=>`<div class="kv-row" style="border-bottom:none; padding:3px 0;"><span>↳ ${h}</span><b>${money(v)}</b></div>`).join('')}
@@ -1446,10 +1603,10 @@
 
           <div class="divider-lbl">Kết luận</div>
           <div class="kv-row" style="font-size:15px; border-bottom:none; padding-top:10px;">
-            <span><b>Số dư tồn quỹ Xã còn lại</b></span>
+            <span><b>Số dư tồn quỹ ${adminLevelLabel()} còn lại</b></span>
             <span class="pill ${acct.tonQuy>=0?'pill-green':'pill-red'}" style="font-size:14px; padding:5px 14px;">${money(acct.tonQuy)}</span>
           </div>
-          <p class="sub" style="margin-top:10px;">Số liệu trên có thể dùng trực tiếp để báo cáo quyết toán quỹ Hội Nông dân Xã trong kỳ đã chọn.</p>
+          <p class="sub" style="margin-top:10px;">Số liệu trên có thể dùng trực tiếp để báo cáo quyết toán quỹ ${hoiNongDanNatural()} trong kỳ đã chọn.</p>
         </div>
       </div>`;
   }
@@ -1530,7 +1687,7 @@
 
   function trashLabel(item){
     const kind = item._kind || 'borrower'; // dữ liệu cũ chưa có _kind mặc định là hộ vay
-    if(kind==='expense') return `${money(item.amount)} — ${item.purpose===CAT_OTHER? (item.purposeOther||CAT_OTHER) : item.purpose}`;
+    if(kind==='expense') return `${money(item.amount)} — ${item.purpose===CAT_OTHER? (item.purposeOther||categoryLabel(CAT_OTHER)) : categoryLabel(item.purpose)}`;
     return `${item.name} (${item.hamlet||'—'})`;
   }
   function renderTrashTab(el){
@@ -1607,10 +1764,24 @@
     el.innerHTML = `
       <div class="panel"><div class="panel-head"><h3>Thông tin địa phương</h3></div>
         <div class="panel-body">
+          <div class="divider-lbl">Loại hình hành chính</div>
           <div class="form-grid">
-            <div class="field"><label>Xã / Phường / Thị trấn</label><input id="st-ward" value="${cfg.wardName||''}" ${isOwner()?'':'disabled'}></div>
-            <div class="field"><label>Tỷ lệ ấp giữ lại (%)</label><input type="number" id="st-retain" value="${cfg.retainPercent}" ${isOwner()?'':'disabled'}></div>
-            <div class="field full"><label>Danh sách ấp</label><textarea id="st-hamlets" rows="2" ${isOwner()?'':'disabled'}>${(cfg.hamlets||[]).join(', ')}</textarea>
+            <div class="field"><label>Cấp quản lý *</label>
+              <select id="st-adminlevel" ${isOwner()?'':'disabled'}>${ADMIN_LEVEL_OPTIONS.map(o=>`<option value="${o}" ${adminLevelLabel()===o?'selected':''}>${o}</option>`).join('')}</select>
+            </div>
+            <div class="field"><label id="st-ward-label">Tên riêng (${adminLevelLabel()})</label><input id="st-ward" value="${cfg.wardName||''}" ${isOwner()?'':'disabled'}></div>
+            <div class="field"><label>Cấp cơ sở trực thuộc *</label>
+              <select id="st-subadmin" ${isOwner()?'':'disabled'}>${SUB_ADMIN_OPTIONS.map(o=>`<option value="${o}" ${(SUB_ADMIN_OPTIONS.includes(cfg.subAdminType)?cfg.subAdminType:'Ấp')===o?'selected':''}>${o}</option>`).join('')}</select>
+            </div>
+            <div class="field" id="st-subadmin-custom-wrap" style="${cfg.subAdminType==='Khác'?'':'display:none;'}">
+              <label>Tên gọi khác (tự điền) *</label>
+              <input id="st-subadmin-custom" value="${cfg.subAdminCustom||''}" ${isOwner()?'':'disabled'}>
+            </div>
+          </div>
+          <div class="divider-lbl">Thông tin chung</div>
+          <div class="form-grid">
+            <div class="field"><label id="st-retain-label">Tỷ lệ ${subAdminLabelLower()} giữ lại (%)</label><input type="number" id="st-retain" value="${cfg.retainPercent}" ${isOwner()?'':'disabled'}></div>
+            <div class="field full"><label id="st-hamlets-label">${subAdminListLabel()}</label><textarea id="st-hamlets" rows="2" ${isOwner()?'':'disabled'}>${(cfg.hamlets||[]).join(', ')}</textarea>
               <p class="sub" style="margin:4px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p></div>
             <div class="field full"><label>Danh sách phương án vay</label><textarea id="st-projects" rows="2" ${isOwner()?'':'disabled'}>${(cfg.projects||[]).join(', ')}</textarea>
               <p class="sub" style="margin:4px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p></div>
@@ -1669,9 +1840,33 @@
     document.getElementById('bk-import-btn').onclick = ()=> document.getElementById('bk-import-file').click();
     document.getElementById('bk-import-file').onchange = (e)=> importBackupJSON(e.target.files[0]);
 
+    // ---- cập nhật động các nhãn khi đổi cấu hình danh xưng (chưa lưu) ----
+    function currentSubLabelSt(){
+      const t = document.getElementById('st-subadmin').value;
+      if(t==='Khác'){ const c=(document.getElementById('st-subadmin-custom').value||'').trim(); return c || 'Đơn vị'; }
+      return t;
+    }
+    function refreshAdminLabelsSt(){
+      const level = document.getElementById('st-adminlevel').value;
+      const sub = currentSubLabelSt();
+      document.getElementById('st-subadmin-custom-wrap').style.display = document.getElementById('st-subadmin').value==='Khác' ? '' : 'none';
+      document.getElementById('st-ward-label').textContent = `Tên riêng (${level})`;
+      document.getElementById('st-retain-label').textContent = `Tỷ lệ ${sub.toLowerCase()} giữ lại (%)`;
+      document.getElementById('st-hamlets-label').textContent = `Danh sách các ${sub.toLowerCase()}`;
+    }
+    document.getElementById('st-adminlevel').onchange = refreshAdminLabelsSt;
+    document.getElementById('st-subadmin').onchange = refreshAdminLabelsSt;
+    document.getElementById('st-subadmin-custom').oninput = refreshAdminLabelsSt;
+
     if(isOwner()){
       document.getElementById('st-save').onclick = async ()=>{
+        const subAdminType = document.getElementById('st-subadmin').value;
+        const subAdminCustom = document.getElementById('st-subadmin-custom').value.trim();
+        if(subAdminType==='Khác' && !subAdminCustom){ alert('Vui lòng nhập tên gọi khác cho cấp cơ sở trực thuộc.'); return; }
         cfg.wardName = document.getElementById('st-ward').value.trim();
+        cfg.adminLevel = document.getElementById('st-adminlevel').value;
+        cfg.subAdminType = subAdminType;
+        cfg.subAdminCustom = subAdminCustom;
         cfg.retainPercent = parseFloat(document.getElementById('st-retain').value)||0;
         cfg.hamlets = document.getElementById('st-hamlets').value.split(',').map(s=>s.trim()).filter(Boolean);
         cfg.projects = document.getElementById('st-projects').value.split(',').map(s=>s.trim()).filter(Boolean);
@@ -1736,7 +1931,7 @@
 
           <div class="divider-lbl">Thông tin khoản vay</div>
           <div class="form-grid">
-            <div class="field"><label>Ấp / khu dân cư</label><select id="m-hamlet" ${readonly?'disabled':''}>${hamlets.map(h=>`<option ${b.hamlet===h?'selected':''}>${h}</option>`).join('')}</select></div>
+            <div class="field"><label>Thuộc ${subAdminLabel()}</label><select id="m-hamlet" ${readonly?'disabled':''}>${hamlets.map(h=>`<option ${b.hamlet===h?'selected':''}>${h}</option>`).join('')}</select></div>
             <div class="field"><label>Phương án vay vốn</label><select id="m-project" ${readonly?'disabled':''}>${projects.map(p=>`<option ${b.project===p?'selected':''}>${p}</option>`).join('')}</select></div>
             <div class="field"><label>Số tiền gốc (đ)</label><input type="number" id="m-principal" value="${b.principal}" ${readonly?'disabled':''}></div>
             <div class="field"><label>Lãi suất (%/năm)</label><input type="number" step="0.01" id="m-rate" value="${b.rate}" ${readonly?'disabled':''}></div>
@@ -1836,3 +2031,5 @@
   boot();
 })();
 </script>
+</body>
+</html>
