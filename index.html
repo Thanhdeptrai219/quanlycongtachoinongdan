@@ -230,6 +230,15 @@
   html{-webkit-text-size-adjust:100%; text-size-adjust:100%;}
   body{margin:0; overflow-x:hidden;}
   #root{overflow-x:hidden;}
+  .preview-banner{
+    position:sticky; top:0; z-index:60; background:#fff3cd; color:#7a5b00;
+    padding:10px 16px; text-align:center; font-size:13px; font-weight:600;
+    border-bottom:2px solid #f0c14b;
+  }
+  .preview-banner .link-btn{
+    background:none; border:none; padding:0; margin:0; color:#1a4d8f;
+    text-decoration:underline; font-weight:700; font-size:inherit; cursor:pointer;
+  }
 
   @media (max-width:820px){
     .app-shell{flex-direction:column;}
@@ -327,6 +336,17 @@
   // =====================================================================
   function wardId(){ return state.identity && state.identity.wardId; }
   function wref(sub){ return rtdb.ref(`data/${wardId()}/${sub}`); }
+  // Phiên bản tổng quát — thao tác với BẤT KỲ mã xã nào (không nhất thiết là mã đang active),
+  // dùng cho màn hình "Ví mã xã" (đa mã xã / multi-tenant): kiểm tra mã tồn tại chưa, xoá/khôi phục...
+  function wrefFor(wid, sub){ return rtdb.ref(`data/${wid}/${sub}`); }
+  async function cGetOnceFor(wid, sub, fallback){
+    try{ const snap = await wrefFor(wid, sub).get(); return snap.exists() ? snap.val() : fallback; }
+    catch(e){ console.error('Firebase đọc lỗi:', wid, sub, e); return fallback; }
+  }
+  // Email của Chủ trang web (superadmin) — người duy nhất có quyền thao tác
+  // với "Thùng rác hệ thống" (nơi các mã xã bị Chủ mã xoá vĩnh viễn cuối cùng sẽ rơi vào).
+  const SITE_OWNER_EMAIL = 'lookatmevanthanhpham@gmail.com';
+  function isSiteOwner(){ return !!(state.identity && state.identity.email === SITE_OWNER_EMAIL); }
 
   function snapToArray(val){ return val ? Object.values(val) : []; }
   function byId(list){ const o={}; (list||[]).forEach(x=>{ if(x && x.id) o[x.id]=x; }); return o; }
@@ -362,6 +382,7 @@
   // Thay cho polling — mọi thay đổi từ bất kỳ thiết bị nào (Xã/Ấp) sẽ đẩy
   // xuống ngay lập tức cho tất cả các thiết bị khác đang mở ứng dụng.
   let realtimeUnsubs = [];
+  let dataAttached = false; // đã bind borrowers/expenses/trash/log hay chưa (chỉ bind khi KHÔNG "chờ duyệt")
   function attachRealtime(){
     detachRealtime();
     const bind = (sub, applyFn) => {
@@ -370,18 +391,72 @@
       ref.on('value', cb);
       realtimeUnsubs.push(()=>ref.off('value', cb));
     };
-    bind('config', v => { state.config = v; });
+    // config luôn được lắng nghe (cần để xác định vai trò / phát hiện bị Chủ mã xoá hoặc
+    // đổi mật khẩu mã — kể cả khi tài khoản đang ở trạng thái "chờ duyệt"). Từ nay việc chia
+    // sẻ quyền (Loại 1 công khai / Loại 2 đích danh) đều nằm sẵn trong config.publicPerms /
+    // config.grants — không cần một node "collaborators" riêng như trước nữa.
+    bind('config', v => {
+      const hasEmail = !!(state.identity && state.identity.email);
+      const isOwnerOfIt = hasEmail && v && v.ownerEmail === state.identity.email;
+      state.config = v;
+      if(v && v.deleted && !isOwnerOfIt){
+        if(hasEmail) kickToWallet('Mã xã này đã bị Chủ mã xoá. Vui lòng liên hệ Chủ mã để biết thêm chi tiết.');
+        else kickAnonymousToLogin('Mã định danh này đã bị Chủ mã xoá hoặc thay đổi.');
+        return;
+      }
+      if(hasEmail && !isOwnerOfIt && v){
+        const mine = (state.myWards||[]).find(w=>w.wardId===wardId());
+        if(mine && typeof mine.av==='number' && (v.accessVersion||0)!==mine.av){
+          kickToWallet('Chủ mã đã thay đổi cấu hình, vui lòng liên hệ Chủ mã để lấy mã mới.'); return;
+        }
+      }
+      // Khách qua mã (không đăng nhập) không có "ví" để lưu accessVersion đã tham gia, nên
+      // nếu Chủ mã đổi mật khẩu, họ chỉ mất quyền ở lần tải lại trang kế tiếp — hạn chế đã biết,
+      // vì hệ thống không lưu phiên cho người dùng ẩn danh.
+      maybeAttachData();
+    });
+    maybeAttachData();
+  }
+  function maybeAttachData(){
+    if(dataAttached) return;
+    if(isPending()){ render(); return; }
+    dataAttached = true;
+    const bind = (sub, applyFn) => {
+      const ref = wref(sub);
+      const cb = snap => { applyFn(snap.val()); render(); };
+      ref.on('value', cb);
+      realtimeUnsubs.push(()=>ref.off('value', cb));
+    };
     bind('borrowers', v => { state.borrowers = snapToArray(v); });
     bind('expenses', v => { state.expenses = snapToArray(v); });
     bind('trash', v => { state.trash = snapToArray(v); });
-    bind('collaborators', v => { state.collaborators = v || {}; });
     // Nhật ký: chỉ lấy 500 dòng gần nhất, sắp xếp mới nhất lên đầu
     const logRef = wref('activityLog').limitToLast(500);
     const logCb = snap => { state.log = snapToArray(snap.val()).sort((a,b)=> new Date(b.time)-new Date(a.time)); render(); };
     logRef.on('value', logCb);
     realtimeUnsubs.push(()=>logRef.off('value', logCb));
+    render();
   }
-  function detachRealtime(){ realtimeUnsubs.forEach(off=>off()); realtimeUnsubs = []; }
+  function detachRealtime(){ realtimeUnsubs.forEach(off=>off()); realtimeUnsubs = []; dataAttached = false; }
+  // Văng người dùng (Khách đã đăng nhập Google) về màn hình "Ví mã xã" kèm thông báo — dùng
+  // khi Chủ mã xoá hoặc đổi mật khẩu mã trong lúc Khách đang xem.
+  function kickToWallet(message){
+    detachRealtime();
+    state.identity.wardId = '';
+    setActiveWardCache('');
+    state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[];
+    alert(message);
+    loadWallet().then(()=>{ state.view = 'wallet'; render(); });
+  }
+  // Văng Khách qua mã KHÔNG đăng nhập (codeGuest) về màn hình đăng nhập ban đầu.
+  function kickAnonymousToLogin(message){
+    detachRealtime();
+    alert(message);
+    state.identity = null;
+    state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[];
+    state.view = 'login';
+    render();
+  }
 
   // =====================================================================
   // ---------- LỚP LƯU TRỮ NỘI BỘ (chỉ trên máy — KHÔNG lên đám mây) -----
@@ -551,12 +626,11 @@
     const backup = {
       _type: 'quan-ly-tai-chinh-hoi-nong-dan-backup',
       exportedAt: new Date().toISOString(),
-      config: state.config,
+      config: state.config, // đã bao gồm publicPerms/grants (phân quyền Loại 1 & Loại 2)
       borrowers: state.borrowers,
       expenses: state.expenses,
       trash: state.trash,
       activityLog: state.log,
-      collaborators: state.collaborators,
     };
     downloadBlob(`Sao-luu-du-lieu_${todayStr()}.json`, JSON.stringify(backup, null, 2), 'application/json');
   }
@@ -612,13 +686,16 @@
   // ---------- app state ----------
   let state = {
     view:'boot',
-    identity:null,        // {email, name}
-    config:null,          // shared core config
+    identity:null,        // {email, name, photo, wardId} — wardId có thể rỗng (chưa chọn xã nào)
+    config:null,          // shared core config (của mã xã đang active)
     borrowers:[],
     expenses:[],          // shared: khoản chi tiêu xã
     trash:[],
     log:[],
-    collaborators:{},     // shared {email: {name, role}}
+    collaborators:{},     // shared {email: {name, role}} (của mã xã đang active)
+    myWards:[],           // Ví của tài khoản: [{wardId, kind:'owner'|'guest', wardName, av, live:{...}}]
+    myDeletedWards:[],    // Thùng rác cấp tài khoản: các mã xã do CHÍNH mình làm Chủ và đã xoá
+    sysTrash:[],          // Thùng rác hệ thống (chỉ site owner thấy) — các mã đã bị xoá vĩnh viễn
     activeTab:'dashboard',
     reportMode:'quarter',
     reportQuarter:'q1',
@@ -630,22 +707,85 @@
     expSearch:'', expFilterCat:'',
     modal:null,           // {type:'borrower'|'expense'|'onboarding'|'settings'|'trashConfirm', payload}
     bellOpen:false,
+    walletTrashOpen:false,
+    previewMode:false,   // môi trường tham quan (không đăng nhập, dùng dữ liệu mẫu, mọi nút bấm bị vô hiệu hoá)
   };
 
-  function myRole(){
-    if(!state.identity || !state.config) return null;
-    if(state.identity.email === state.config.ownerEmail) return 'owner';
-    const c = state.collaborators[emailToKey(state.identity.email)];
-    return c ? c.role : 'viewer';
+  // =====================================================================
+  // ---------- HỆ PHÂN QUYỀN MỚI (module-based, thay cho collaborators cũ) ----
+  // Mỗi mã xã có 2 lớp chia sẻ, lưu trong config:
+  //   config.publicPerms = {data,members,strength,internal} -> 'none'|'view'|'edit'
+  //     áp dụng cho BẤT KỲ ai vào bằng đúng Mã định danh + mật khẩu (kể cả không đăng nhập Google)
+  //   config.grants = { [emailKey]: {email, data,members,strength,internal,settings} }
+  //     áp dụng riêng cho MỘT tài khoản Google cụ thể (Loại 2 — chia sẻ đích danh),
+  //     override lên trên publicPerms; "settings" chỉ có ở đây, không có ở publicPerms.
+  // Chủ mã (config.ownerEmail đúng bằng email đang đăng nhập) luôn full quyền mọi nơi.
+  // =====================================================================
+  const SHARE_MODULES = [
+    {key:'data', label:'Sổ vay vốn'},
+    {key:'members', label:'Hồ sơ hội viên'},
+    {key:'strength', label:'Thực lực Hội'},
+    {key:'internal', label:'Thu – Chi nội bộ'},
+  ];
+  const PERM_OPTIONS = [
+    {v:'none', label:'Không được xem'},
+    {v:'view', label:'Được quyền xem'},
+    {v:'edit', label:'Được quyền sửa'},
+  ];
+  function isOwner(){
+    return !!(state.identity && state.identity.email && state.config && state.identity.email === state.config.ownerEmail);
   }
-  function canEdit(){ const r = myRole(); return r==='owner' || r==='editor'; }
-  function isOwner(){ return myRole()==='owner'; }
+  function myGrant(){
+    if(!state.identity || !state.identity.email || !state.config) return null;
+    return (state.config.grants||{})[emailToKey(state.identity.email)] || null;
+  }
+  // Quyền hiệu lực của TÔI với 1 trong 4 module dữ liệu ('data'|'members'|'strength'|'internal')
+  function modulePerm(m){
+    if(state.previewMode) return 'edit'; // môi trường tham quan: thấy đầy đủ giao diện, nút bấm sẽ bị vô hiệu hoá riêng
+    if(isOwner()) return 'edit';
+    if(!state.config) return 'none';
+    const g = myGrant();
+    if(g && g[m]) return g[m];
+    return (state.config.publicPerms && state.config.publicPerms[m]) || 'none';
+  }
+  function canViewModule(m){ return modulePerm(m)!=='none'; }
+  function canEditModule(m){ return modulePerm(m)==='edit'; }
+  // Quyền vào/sửa "Cài đặt của mã định danh" — CHỈ cấp được qua Loại 2 (đích danh email), không có ở Loại 1 (công khai)
+  function settingsPerm(){
+    if(state.previewMode) return 'edit';
+    if(isOwner()) return 'edit';
+    const g = myGrant();
+    return (g && g.settings) || 'none';
+  }
+  function canEditSettings(){ return isOwner() || settingsPerm()==='edit'; }
+  function hasAnyWardAccess(){
+    if(state.previewMode) return true;
+    if(isOwner()) return true;
+    if(settingsPerm()!=='none') return true;
+    return SHARE_MODULES.some(m=>modulePerm(m.key)!=='none');
+  }
+  // "Đang chờ duyệt" CHỈ áp dụng cho khách đã đăng nhập Google & tham gia bằng mã (Loại 2 chưa được cấp gì).
+  // Khách qua mã không đăng nhập (codeGuest) hoặc môi trường tham quan dùng riêng hệ publicPerms/preview, không có khái niệm này.
+  function isPending(){
+    if(state.previewMode) return false;
+    if(!state.identity || !state.identity.email) return false;
+    if(!wardId() || !state.config) return false;
+    return !hasAnyWardAccess();
+  }
 
   // ---------- danh xưng hành chính động (Xã/Phường, Ấp/Khu phố/Thôn...) ----------
   // Mọi nơi trong giao diện, biểu mẫu, và file xuất (Excel/Word/PDF/In) đều PHẢI
   // lấy danh xưng qua các hàm dưới đây — tuyệt đối không viết chết chữ "Xã"/"Ấp".
   const ADMIN_LEVEL_OPTIONS = ['Xã', 'Phường'];
   const SUB_ADMIN_OPTIONS = ['Khu dân cư', 'Ấp', 'Thôn', 'Khu phố', 'Xóm', 'Tổ', 'Khác'];
+  // Loại đơn vị hành chính cấp Tỉnh (dùng ở "Thông tin cơ bản bắt buộc" — màn hình thiết lập ban đầu / Cài đặt)
+  const PROVINCE_TYPE_OPTIONS = ['Tỉnh', 'Thành phố'];
+  function provinceTitle(){
+    const cfg = state.config||{};
+    const t = PROVINCE_TYPE_OPTIONS.includes(cfg.provinceType) ? cfg.provinceType : '';
+    const name = (cfg.provinceName||'').trim();
+    return name ? `${t} ${name}`.trim() : '';
+  }
 
   // Cấp quản lý: "Xã" hoặc "Phường" (mặc định "Xã" nếu chưa cấu hình)
   function adminLevelLabel(){
@@ -691,22 +831,314 @@
   }
 
   const IDENTITY_KEY = 'hnd_identity'; // chỉ lưu trên máy này (localStorage), không đưa lên đám mây
-  // Mỗi tài khoản Google (email) được gắn nhớ 1 "Mã định danh cấp Xã" trên máy này,
-  // để lần đăng nhập sau không phải nhập lại. Đây chỉ là cache cục bộ cho tiện thao
-  // tác — phân quyền thật (Owner/Editor/Viewer) luôn được kiểm tra lại theo email
-  // thật của Google so với cấu hình (config.ownerEmail / collaborators) trên Firebase.
-  function wardIdMapKey(email){ return `hnd_wardid_for_${emailToKey(email)}`; }
+  // Mỗi tài khoản Google (email) có thể sở hữu/tham gia NHIỀU mã xã (multi-tenant).
+  // Máy này chỉ cache "mã xã đang xem gần nhất" để lần sau mở lên vào thẳng, còn danh sách
+  // đầy đủ các mã xã (Ví mã xã) luôn được đọc lại từ Firebase: users/{email}/wards.
+  function activeWardCacheKey(email){ return `hnd_active_ward_${emailToKey(email)}`; }
+  // "Mã ẩn" — chuỗi định danh cố định, KHÔNG BAO GIỜ đổi dù người dùng đổi tên/mã định danh
+  // hiển thị bao nhiêu lần. Dùng riêng cho mục đích quản trị (thu phí / kích hoạt gói VIP-PRO
+  // sau này) — hoàn toàn không hiển thị hay tác động gì tới trải nghiệm người dùng thường.
+  function genSecretId(){ return 'sec_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10); }
+  // Đảm bảo MỖI tài khoản Google đã đăng nhập đều có 1 Mã ẩn cấp-tài khoản — kể cả khi họ
+  // chưa/không kết nối với mã xã nào (mã định danh để trống), theo đúng yêu cầu quản trị.
+  async function ensureAccountSecretId(){
+    try{
+      const ref = rtdb.ref(`users/${emailToKey(state.identity.email)}/secretId`);
+      const snap = await ref.get();
+      if(!snap.exists()) await ref.set(genSecretId());
+    }catch(e){ console.error('Không tạo được Mã ẩn cấp tài khoản:', e); }
+  }
+  function setActiveWardCache(wid){ lset(activeWardCacheKey(state.identity.email), wid||''); }
+  function seenWelcomeKey(email){ return `hnd_seen_welcome_${emailToKey(email)}`; }
+
+  // ---------- VÍ MÃ XÃ (multi-tenant wallet) ----------
+  // users/{emailKey}/wards/{wardId}        = {kind:'owner'|'guest', wardName, addedAt, av}
+  // users/{emailKey}/deletedWards/{wardId} = {wardId, wardName, deletedAt}  (thùng rác cấp tài khoản — chỉ của Chủ mã)
+  // superadmin/trashWards/{wardId}         = {wardId, wardName, ownerEmail, deletedAt} (thùng rác hệ thống — chỉ site owner)
+  function myWardsRef(){ return rtdb.ref(`users/${emailToKey(state.identity.email)}/wards`); }
+  function myDeletedWardsRef(){ return rtdb.ref(`users/${emailToKey(state.identity.email)}/deletedWards`); }
+
+  async function loadWallet(){
+    const wardsSnap = await myWardsRef().get().catch(()=>null);
+    const wardsObj = (wardsSnap && wardsSnap.exists()) ? wardsSnap.val() : {};
+    state.myWards = await Promise.all(Object.entries(wardsObj).map(async ([wid, w])=>{
+      const live = await cGetOnceFor(wid, 'config', null);
+      return {
+        wardId: wid, kind: w.kind, addedAt: w.addedAt, av: w.av||0,
+        wardName: (live && live.wardName) || w.wardName || '',
+        adminLevel: live && live.adminLevel,
+        live: live ? { deleted: !!live.deleted, accessVersion: live.accessVersion||0, ownerEmail: live.ownerEmail } : { deleted:true, accessVersion:0 },
+      };
+    }));
+    const delSnap = await myDeletedWardsRef().get().catch(()=>null);
+    const delObj = (delSnap && delSnap.exists()) ? delSnap.val() : {};
+    state.myDeletedWards = Object.values(delObj);
+    if(isSiteOwner()){
+      const trashSnap = await rtdb.ref('superadmin/trashWards').get().catch(()=>null);
+      state.sysTrash = (trashSnap && trashSnap.exists()) ? Object.values(trashSnap.val()) : [];
+    } else state.sysTrash = [];
+  }
+
+  // Tự động thêm 1 mục "Chia sẻ đích danh" (mặc định CHƯA cấp quyền gì — 'none' ở mọi module)
+  // vào cfg.grants ngay khi có người dùng tài khoản Google tham gia (KHÁCH) bằng đúng Mã định
+  // danh của Chủ mã. Nhờ vậy Chủ mã vào "Cài đặt & Chia sẻ" sẽ thấy sẵn tài khoản đó và chỉ
+  // cần bấm chọn quyền Xem/Sửa cho từng mục, không cần gõ tay lại email.
+  // Trả về true nếu VỪA thêm mới (cần ghi lại cfg lên Firebase), false nếu tài khoản đã có sẵn
+  // trong danh sách chia sẻ đích danh từ trước (giữ nguyên quyền đã cấp, không ghi đè).
+  function ensureGrantEntryForGuest(cfg, email, name){
+    if(!email) return false;
+    const key = emailToKey(email);
+    cfg.grants = cfg.grants || {};
+    if(cfg.grants[key]){
+      // Đã tồn tại — chỉ bổ sung tên hiển thị nếu trước đó chưa có, KHÔNG đụng vào quyền đã cấp.
+      let changed = false;
+      if(name && !cfg.grants[key].name){ cfg.grants[key].name = name; changed = true; }
+      cfg.grants[key].lastJoinedAt = new Date().toISOString();
+      return changed; // chỉ cần ghi lại nếu có thay đổi tên hiển thị
+    }
+    cfg.grants[key] = {
+      email, name: name||'',
+      joinedAt: new Date().toISOString(), autoAdded: true,
+      data:'none', members:'none', strength:'none', internal:'none', settings:'none',
+    };
+    return true;
+  }
+
+  // Tham gia (Khách) hoặc tạo mới (trở thành Chủ mã) một mã định danh cấp xã.
+  // Trả về true nếu thành công (đã chuyển màn hình), false nếu bị chặn (sai mật khẩu...).
+  async function joinOrCreateWard(widRaw, password){
+    const wid = (widRaw||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
+    if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return false; }
+    const existingCfg = await cGetOnceFor(wid, 'config', null);
+    const emailKey = emailToKey(state.identity.email);
+    if(!existingCfg){
+      // Mã chưa tồn tại -> tài khoản này trở thành CHỦ MÃ, cần thiết lập cơ bản (onboarding)
+      await rtdb.ref(`users/${emailKey}/wards/${wid}`).set({kind:'owner', wardName:'', addedAt:new Date().toISOString()});
+      state.identity.wardId = wid;
+      setActiveWardCache(wid);
+      state._pendingAccessCode = password || '';
+      state.config = null;
+      state.view = 'onboarding';
+      render();
+      return true;
+    }
+    if(existingCfg.deleted){ alert('Mã xã này đã bị Chủ mã xoá, không thể tham gia. Vui lòng hỏi lại Chủ mã hoặc tạo mã khác.'); return false; }
+    if(existingCfg.ownerEmail === state.identity.email){
+      // Đã là Chủ mã của mã này (chỉ thiếu bản ghi trong Ví, ví dụ đăng nhập máy mới) -> tự phục hồi
+      await rtdb.ref(`users/${emailKey}/wards/${wid}`).set({kind:'owner', wardName: existingCfg.wardName||'', addedAt:new Date().toISOString()});
+    } else {
+      if((existingCfg.accessCode||'') && existingCfg.accessCode !== (password||'')){
+        alert('Sai mật khẩu mã xã. Vui lòng liên hệ Chủ mã để lấy đúng mật khẩu.');
+        return false;
+      }
+      // Tự động đưa tài khoản KHÁCH này vào danh sách "Chia sẻ đích danh" của Chủ mã (Yêu cầu 2)
+      if(ensureGrantEntryForGuest(existingCfg, state.identity.email, state.identity.name)){
+        await wrefFor(wid, 'config').set(existingCfg);
+      }
+      await rtdb.ref(`users/${emailKey}/wards/${wid}`).set({kind:'guest', wardName: existingCfg.wardName||'', addedAt:new Date().toISOString(), av: existingCfg.accessVersion||0});
+    }
+    await enterWard(wid);
+    return true;
+  }
+
+  function normalizeWardIdStr(s){ return (s||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,''); }
+
+  // ---- Dùng cho màn hình "Thiết lập ban đầu" (yêu cầu 4): 2 hành động RIÊNG BIỆT, không tự suy đoán ----
+  // [Tạo mã định danh cấp xã mới] — báo lỗi rõ nếu mã đã có người dùng.
+  async function createWardStrict(widRaw, password){
+    const wid = normalizeWardIdStr(widRaw);
+    if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return false; }
+    const existing = await cGetOnceFor(wid, 'config', null);
+    if(existing && !existing.deleted){ alert('Mã định danh này đã tồn tại, vui lòng thay đổi ký tự khác để tránh trùng lặp'); return false; }
+    const emailKey = emailToKey(state.identity.email);
+    await rtdb.ref(`users/${emailKey}/wards/${wid}`).set({kind:'owner', wardName:'', addedAt:new Date().toISOString()});
+    state.identity.wardId = wid;
+    setActiveWardCache(wid);
+    state._pendingAccessCode = password || '';
+    state._pendingSecretId = genSecretId();
+    state.config = null;
+    state.view = 'onboarding';
+    render();
+    return true;
+  }
+  // [Tham gia bằng mã định danh cấp xã] — CHỈ tham gia mã đã có, không tự tạo mới.
+  async function joinWardStrict(widRaw, password){
+    const wid = normalizeWardIdStr(widRaw);
+    const cfg = wid ? await cGetOnceFor(wid, 'config', null) : null;
+    if(!cfg || cfg.deleted){ alert('Mã định danh này chưa tồn tại hoặc đã bị thay đổi.'); return false; }
+    if((cfg.accessCode||'') !== (password||'')){ alert('Mã định danh này chưa tồn tại hoặc đã bị thay đổi.'); return false; }
+    const emailKey = emailToKey(state.identity.email);
+    if(cfg.ownerEmail === state.identity.email){
+      await rtdb.ref(`users/${emailKey}/wards/${wid}`).set({kind:'owner', wardName: cfg.wardName||'', addedAt:new Date().toISOString()});
+    } else {
+      // Tự động đưa tài khoản KHÁCH này vào danh sách "Chia sẻ đích danh" của Chủ mã (Yêu cầu 2)
+      if(ensureGrantEntryForGuest(cfg, state.identity.email, state.identity.name)){
+        await wrefFor(wid, 'config').set(cfg);
+      }
+      await rtdb.ref(`users/${emailKey}/wards/${wid}`).set({kind:'guest', wardName: cfg.wardName||'', addedAt:new Date().toISOString(), av: cfg.accessVersion||0});
+    }
+    await enterWard(wid);
+    return true;
+  }
+  // Tham gia bằng mã (Loại 1 công khai) mà KHÔNG cần đăng nhập Google — dùng ở màn hình đăng nhập.
+  // Không có "Ví mã xã", quyền hạn hoàn toàn theo config.publicPerms của mã đó.
+  async function joinWardAsCodeGuest(widRaw, password){
+    const wid = normalizeWardIdStr(widRaw);
+    const cfg = wid ? await cGetOnceFor(wid, 'config', null) : null;
+    if(!cfg || cfg.deleted){ alert('Mã định danh này chưa tồn tại hoặc đã bị thay đổi.'); return false; }
+    if((cfg.accessCode||'') !== (password||'')){ alert('Mã định danh này chưa tồn tại hoặc đã bị thay đổi.'); return false; }
+    state.previewMode = false;
+    state.identity = { name:'Khách qua mã (không đăng nhập)', email:null, photo:'', wardId: wid };
+    state.config = cfg;
+    state.activeTab = 'dashboard';
+    state.view = 'app';
+    attachRealtime();
+    render();
+    return true;
+  }
+
+  // ---- Môi trường THAM QUAN (yêu cầu 2): xem giao diện mẫu, không cần đăng nhập, không đụng Firebase ----
+  function buildDemoState(){
+    return {
+      config: {
+        wardName:'Bình Minh (Bản xem trước)', adminLevel:'Xã', subAdminType:'Ấp', subAdminCustom:'',
+        provinceType:'Tỉnh', provinceName:'Bình Phước (Bản xem trước)',
+        officerTitle:'Chủ tịch Hội Nông dân', ownerEmail:'demo@example.com',
+        hamlets:['Ấp 1','Ấp 2','Ấp 3'], projects:['Phương án vay chăn nuôi bò','Phương án vay trồng rau sạch'],
+        quarters:{ q1:{label:'Quý 1', start:'2026-01-01', end:'2026-03-31'}, q2:{label:'Quý 2', start:'2026-04-01', end:'2026-06-30'},
+                   q3:{label:'Quý 3', start:'2026-07-01', end:'2026-09-30'}, q4:{label:'Quý 4', start:'2026-10-01', end:'2026-12-31'} },
+        retainPercent:30, accessCode:'', accessVersion:0, deleted:false,
+        publicPerms:{data:'edit', members:'edit', strength:'edit', internal:'edit'}, grants:{}, secretId:'demo',
+      },
+      borrowers: [
+        {id:'d1', name:'Nguyễn Văn A (mẫu)', cccd:'', phone:'', guarantor:'', address:'', hamlet:'Ấp 1', project:'Phương án vay chăn nuôi bò', principal:20000000, rate:6.5, loanDate:'2026-01-10', dueDate:'2026-12-10', fundSource:'', prevBalance:0, interestPaid:0, principalPaid:0, isExtended:false, extensionDueDate:'', checked:false, note:'', deleted:false},
+        {id:'d2', name:'Trần Thị B (mẫu)', cccd:'', phone:'', guarantor:'', address:'', hamlet:'Ấp 2', project:'Phương án vay trồng rau sạch', principal:15000000, rate:6, loanDate:'2026-02-01', dueDate:'2026-08-01', fundSource:'', prevBalance:0, interestPaid:200000, principalPaid:0, isExtended:false, extensionDueDate:'', checked:false, note:'', deleted:false},
+      ],
+      expenses: [
+        {id:'e1', date:'2026-03-01', amount:500000, purpose:CAT_MEETING, hamlet:'', purposeOther:'', note:'Họp quý 1 (mẫu)'},
+      ],
+      trash: [], log: [],
+    };
+  }
+  function enterPreviewMode(){
+    const demo = buildDemoState();
+    detachRealtime();
+    state.previewMode = true;
+    state.identity = { name:'Khách tham quan', email:null, photo:'', wardId:'demo' };
+    state.config = demo.config;
+    state.borrowers = demo.borrowers;
+    state.expenses = demo.expenses;
+    state.trash = demo.trash;
+    state.log = demo.log;
+    state.activeTab = 'dashboard';
+    state.view = 'app';
+    render();
+  }
+  function exitPreviewMode(){
+    state.previewMode = false;
+    state.identity = null;
+    state.config=null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[];
+    state.view = 'login';
+    render();
+  }
+
+  // Vào xem/làm việc với 1 mã xã đã có trong Ví (không cần hỏi lại mật khẩu).
+  async function enterWard(wid){
+    state.identity.wardId = wid;
+    setActiveWardCache(wid);
+    lset(IDENTITY_KEY, state.identity);
+    state.config = await cGetOnce('config', null);
+    if(!state.config){ state.view = 'onboarding'; render(); return; }
+    if(state.config.deleted){
+      alert('Mã xã này hiện đã bị Chủ mã xoá.');
+      state.identity.wardId = ''; setActiveWardCache('');
+      await loadWallet();
+      state.view = 'wallet'; render();
+      return;
+    }
+    state.view = 'app';
+    attachRealtime();
+    render();
+  }
+
+  // Rời mã xã đang xem, quay về Ví mã xã (KHÔNG đăng xuất tài khoản Google)
+  async function exitToWallet(){
+    detachRealtime();
+    state.identity.wardId = '';
+    setActiveWardCache('');
+    lset(IDENTITY_KEY, state.identity);
+    state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[]; state.collaborators={};
+    await loadWallet();
+    state.view = 'wallet';
+    render();
+  }
+
+  // ---- Xoá / khôi phục mã xã (chuỗi 3 tầng: đang dùng -> thùng rác cá nhân -> thùng rác hệ thống) ----
+  async function ownerDeleteWard(wid){
+    const w = state.myWards.find(x=>x.wardId===wid);
+    if(!confirm(`Xoá mã xã "${wid}"${w&&w.wardName?` (${w.wardName})`:''} sẽ đưa vào Thùng rác của bạn và văng toàn bộ Khách đang sài ké ra ngoài. Dữ liệu KHÔNG bị mất, có thể khôi phục sau. Bạn có chắc chắn?`)) return;
+    const cfg = await cGetOnceFor(wid, 'config', {});
+    cfg.deleted = true; cfg.deletedAt = new Date().toISOString(); cfg.deletedBy = state.identity.email;
+    await wrefFor(wid, 'config').set(cfg);
+    const emailKey = emailToKey(state.identity.email);
+    await rtdb.ref(`users/${emailKey}/wards/${wid}`).remove();
+    await rtdb.ref(`users/${emailKey}/deletedWards/${wid}`).set({wardId:wid, wardName:cfg.wardName||(w&&w.wardName)||'', deletedAt:new Date().toISOString()});
+    if(wardId()===wid){ await kickToWalletSilent(); } else { await loadWallet(); render(); }
+  }
+  async function guestRemoveWard(wid){
+    if(!confirm('Xoá mã xã này khỏi danh sách của bạn? Bạn có thể tham gia lại bất cứ lúc nào bằng đúng mã xã (và mật khẩu, nếu có).')) return;
+    await rtdb.ref(`users/${emailToKey(state.identity.email)}/wards/${wid}`).remove();
+    if(wardId()===wid){ await kickToWalletSilent(); } else { await loadWallet(); render(); }
+  }
+  async function kickToWalletSilent(){
+    detachRealtime();
+    state.identity.wardId = ''; setActiveWardCache('');
+    state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[]; state.collaborators={};
+    await loadWallet();
+    state.view = 'wallet'; render();
+  }
+  async function restoreDeletedWard(wid){
+    const entry = state.myDeletedWards.find(x=>x.wardId===wid);
+    const cfg = await cGetOnceFor(wid, 'config', null);
+    if(cfg){ cfg.deleted=false; delete cfg.deletedAt; delete cfg.deletedBy; await wrefFor(wid,'config').set(cfg); }
+    const emailKey = emailToKey(state.identity.email);
+    await rtdb.ref(`users/${emailKey}/deletedWards/${wid}`).remove();
+    await rtdb.ref(`users/${emailKey}/wards/${wid}`).set({kind:'owner', wardName:(cfg&&cfg.wardName)||(entry&&entry.wardName)||'', addedAt:new Date().toISOString()});
+    await loadWallet(); render();
+  }
+  async function purgeDeletedWardToSuperadmin(wid){
+    if(!confirm('Xoá vĩnh viễn: mã này sẽ KHÔNG còn trong thùng rác của bạn nữa (chỉ Quản trị viên trang web mới khôi phục được cho bạn). Bạn có chắc chắn?')) return;
+    const entry = state.myDeletedWards.find(x=>x.wardId===wid);
+    await rtdb.ref(`superadmin/trashWards/${wid}`).set({wardId:wid, wardName:(entry&&entry.wardName)||'', ownerEmail: state.identity.email, deletedAt:new Date().toISOString()});
+    await rtdb.ref(`users/${emailToKey(state.identity.email)}/deletedWards/${wid}`).remove();
+    await loadWallet(); render();
+  }
+  // ---- Thùng rác hệ thống (chỉ Chủ trang web) ----
+  async function superRestoreWard(wid){
+    const entry = state.sysTrash.find(x=>x.wardId===wid);
+    if(!entry) return;
+    await rtdb.ref(`users/${emailToKey(entry.ownerEmail)}/deletedWards/${wid}`).set({wardId:wid, wardName:entry.wardName||'', deletedAt: entry.deletedAt||new Date().toISOString()});
+    await rtdb.ref(`superadmin/trashWards/${wid}`).remove();
+    await loadWallet(); render();
+  }
+  async function superPurgeForever(wid){
+    if(!confirm('XOÁ VĨNH VIỄN — TOÀN BỘ dữ liệu (hộ vay, chi tiêu, nhật ký, cộng tác viên...) của mã xã này trên đám mây sẽ bị xoá sạch, KHÔNG THỂ khôi phục. Bạn có chắc chắn tuyệt đối?')) return;
+    await rtdb.ref(`data/${wid}`).remove();
+    await rtdb.ref(`superadmin/trashWards/${wid}`).remove();
+    await loadWallet(); render();
+  }
 
   async function boot(){
     state.view = 'boot'; render();
     // Lắng nghe trạng thái đăng nhập Google thật qua Firebase Auth.
     // Không còn cho phép gõ tay tên/email — email lấy trực tiếp từ tài khoản
-    // Google đã xác thực, dùng để đối chiếu phân quyền Owner/Editor/Viewer.
+    // Google đã xác thực, dùng để đối chiếu phân quyền Owner/Editor/Viewer/Khách.
     auth.onAuthStateChanged(async (user) => {
       if(!user){
         detachRealtime();
         state.identity = null; lset(IDENTITY_KEY, null);
         state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[]; state.collaborators={};
+        state.myWards=[]; state.myDeletedWards=[]; state.sysTrash=[];
         state.view = 'login';
         render();
         return;
@@ -717,31 +1149,21 @@
         await auth.signOut();
         return;
       }
-      const cachedWardId = lget(wardIdMapKey(email), '');
-      const identity = { name: user.displayName || email, email, photo: user.photoURL || '', wardId: cachedWardId || '' };
-      state.identity = identity;
-      if(!cachedWardId){
-        // Lần đầu đăng nhập Google trên máy này / email này -> hỏi Mã định danh cấp Xã
-        state.view = 'wardid';
+      state.identity = { name: user.displayName || email, email, photo: user.photoURL || '', wardId:'' };
+      lset(IDENTITY_KEY, state.identity);
+      ensureAccountSecretId(); // không cần chờ — chạy nền, không ảnh hưởng luồng hiển thị
+      await loadWallet();
+      const cachedActive = lget(activeWardCacheKey(email), '');
+      const stillHave = cachedActive && state.myWards.some(w=>w.wardId===cachedActive && !(w.live && w.live.deleted));
+      if(stillHave){ await enterWard(cachedActive); return; }
+      if(!lget(seenWelcomeKey(email), false) && state.myWards.length===0){
+        state.view = 'welcome';
         render();
         return;
       }
-      lset(IDENTITY_KEY, identity);
-      await enterWorkspace();
+      state.view = 'wallet';
+      render();
     });
-  }
-
-  // Sau khi có identity (đã biết wardId) -> kiểm tra Xã này đã có cấu hình
-  // trên Firebase chưa, rồi bật realtime sync hoặc chuyển sang onboarding.
-  async function enterWorkspace(){
-    state.config = await cGetOnce('config', null);
-    if(!state.config){
-      state.view = 'onboarding';
-    } else {
-      state.view = 'app';
-      attachRealtime();
-    }
-    render();
   }
 
   // ---------- interest engine ----------
@@ -892,9 +1314,10 @@
   // ================= RENDER =================
   function render(){
     if(state.view==='login') return renderLogin();
-    if(state.view==='wardid') return renderWardIdPrompt();
+    if(state.view==='welcome') return renderWelcome();
+    if(state.view==='wallet') return renderWallet();
     if(state.view==='onboarding') return renderOnboarding();
-    if(state.view==='app') return renderApp();
+    if(state.view==='app'){ return isPending() ? renderPendingScreen() : renderApp(); }
     root.innerHTML = '<div class="center-screen">Đang tải…</div>';
   }
 
@@ -906,11 +1329,12 @@
           <h1>Quản lý Công tác Hội Nông dân cấp xã/phường</h1>
           <p class="sub">Đăng nhập để quản lý công tác hội, thực lực hội, hội viên, quỹ hỗ trợ nông dân, thu chi nội bộ, vốn vay, lãi suất và báo cáo địa phương</p>
           <button class="btn btn-gold btn-block" id="li-btn">🔒 Đăng nhập bằng Google</button>
-          <p class="sub" style="margin-top:16px; font-size:11.5px;">
-            Hệ thống lấy Họ tên &amp; Email trực tiếp từ tài khoản Google đã xác thực (không gõ tay).
-            Quyền truy cập — Chủ tài khoản / Cộng tác viên (sửa) / Chỉ xem — được cấp sẵn theo đúng địa chỉ email
-            trong mục Cài đặt &amp; Chia sẻ của từng địa phương.
-          </p>
+          <button class="btn btn-ghost btn-block" id="li-preview" style="margin-top:8px;">👀 Tham quan mà không cần đăng nhập</button>
+
+          <div class="divider-lbl">Hoặc tham gia bằng mã định danh có sẵn</div>
+          <div class="field" style="text-align:left;"><label>Mã định danh</label><input id="li-wardid" placeholder="vd: xabinhminh" style="text-transform:lowercase;"></div>
+          <div class="field" style="text-align:left;"><label>Mật khẩu</label><input id="li-pass" type="password" placeholder="Để trống nếu không có"></div>
+          <button class="btn btn-primary btn-block" id="li-joincode">Tham gia bằng mã này</button>
         </div>
       </div>`;
     document.getElementById('li-btn').onclick = async ()=>{
@@ -927,11 +1351,16 @@
         btn.disabled = false; btn.textContent = '🔒 Đăng nhập bằng Google';
       }
     };
+    document.getElementById('li-preview').onclick = enterPreviewMode;
+    document.getElementById('li-joincode').onclick = ()=>{
+      joinWardAsCodeGuest(document.getElementById('li-wardid').value, document.getElementById('li-pass').value);
+    };
   }
 
-  // Hiện ra đúng 1 lần cho mỗi tài khoản Google trên mỗi trình duyệt — sau khi
-  // Google đã xác thực xong nhưng máy này chưa biết Mã định danh cấp Xã tương ứng.
-  function renderWardIdPrompt(){
+  // Hiện đúng 1 lần cho tài khoản Google hoàn toàn mới (chưa có mã xã nào trong Ví).
+  // Theo đúng yêu cầu 4: thu thập Họ tên/Chức vụ, rồi 3 lựa chọn RIÊNG BIỆT — Tạo mã mới,
+  // Tham gia bằng mã có sẵn, hoặc Bỏ qua (chỉ dùng Thu–Chi nội bộ lưu trên máy).
+  function renderWelcome(){
     const idn = state.identity;
     root.innerHTML = `
       <div class="center-screen">
@@ -939,28 +1368,215 @@
           <div class="rice-badge">🌾</div>
           <h1>Xin chào, ${idn.name||idn.email}</h1>
           <p class="sub">Đã xác thực Google: <b>${idn.email}</b></p>
-          <div class="field" style="text-align:left;">
-            <label>Mã định danh cấp Xã/Phường *</label>
-            <input id="wi-wardid" placeholder="vd: xabinhminh" style="text-transform:lowercase;">
+          <div class="field" style="text-align:left;"><label>Họ và tên *</label><input id="wc-name" value="${idn.name||''}"></div>
+          <div class="field" style="text-align:left;"><label>Chức vụ</label><input id="wc-title" placeholder="Chủ tịch Hội Nông dân, cán bộ..."></div>
+
+          <div class="divider-lbl">Kết nối với mã định danh cấp xã</div>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <button class="btn btn-primary btn-block" id="wc-mode-new">➕ Tạo mã định danh cấp xã mới</button>
+            <button class="btn btn-gold btn-block" id="wc-mode-join">🔑 Tham gia bằng mã định danh cấp xã</button>
+            <button class="btn btn-ghost btn-block" id="wc-mode-skip">Bỏ qua thiết lập mã định danh</button>
           </div>
-          <p class="sub" style="margin-top:-8px; margin-bottom:16px; font-size:11.5px; text-align:left;">
-            Chỉ gồm chữ thường không dấu, số, gạch dưới/gạch ngang. Chủ tịch Hội tự đặt mã này khi thiết lập lần đầu
-            cho địa phương; các cán bộ khác (Phó Chủ tịch, cán bộ cấp cơ sở...) nhập <b>đúng mã đã được cung cấp</b>
-            để vào chung một cơ sở dữ liệu — quyền hạn của từng người sẽ tự áp dụng theo đúng email Google vừa đăng nhập.
+          <p class="sub" style="margin-top:10px; font-size:11.5px; text-align:left;">
+            Mã định danh cấp xã/phường là "chìa khoá" để kết nối dữ liệu chung của một địa phương. Nếu bạn <b>tạo mã mới</b>
+            (mã chưa từng tồn tại), bạn sẽ là <b>CHỦ MÃ</b> — người duy nhất có quyền cấu hình và cấp quyền cho người khác.
+            Nếu bạn <b>tham gia bằng mã đã có</b>, bạn sẽ là <b>KHÁCH</b> — chỉ thao tác được trong phạm vi Chủ mã cho phép.
+            Bạn cũng có thể <b>bỏ qua</b> bước này và thiết lập sau trong mục "Cài đặt &amp; Chia sẻ" — riêng phần
+            Thu–Chi nội bộ trên máy vẫn dùng được ngay.
           </p>
-          <button class="btn btn-primary btn-block" id="wi-continue">Tiếp tục</button>
-          <button class="btn btn-ghost btn-block" id="wi-logout" style="margin-top:8px;">Đăng xuất tài khoản này</button>
+
+          <div id="wc-subarea" style="margin-top:6px;"></div>
+          <button class="btn btn-ghost btn-block" id="wc-logout" style="margin-top:16px;">Đăng xuất tài khoản này</button>
         </div>
       </div>`;
-    document.getElementById('wi-continue').onclick = async ()=>{
-      const wid = document.getElementById('wi-wardid').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
-      if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return; }
-      state.identity = {...state.identity, wardId: wid};
-      lset(wardIdMapKey(state.identity.email), wid);
+
+    // Họ và tên là thông tin BẮT BUỘC (yêu cầu 3) — trả về false và báo lỗi nếu còn trống.
+    const saveNameTitle = ()=>{
+      const nameVal = document.getElementById('wc-name').value.trim();
+      if(!nameVal){ alert('Vui lòng nhập Họ và tên trước khi tiếp tục.'); document.getElementById('wc-name').focus(); return false; }
+      state.identity.name = nameVal;
+      state.identity.title = document.getElementById('wc-title').value.trim();
       lset(IDENTITY_KEY, state.identity);
-      await enterWorkspace();
+      lset(seenWelcomeKey(idn.email), true);
+      return true;
     };
-    document.getElementById('wi-logout').onclick = async ()=>{ await auth.signOut(); };
+
+    // "Bỏ qua thiết lập mã định danh": KHÔNG còn vào thẳng app nữa — chuyển sang màn hình
+    // "Thiết lập cơ sở dữ liệu lõi" (dùng chung với luồng Tạo mã mới) để BẮT BUỘC điền các
+    // Thông tin cơ bản (loại xã/phường, tên xã/phường, tỉnh/thành phố, khu dân cư cấp dưới...)
+    // trước khi được vào giao diện chính (yêu cầu 3 & 4). Vì không có Mã định danh, dữ liệu
+    // này sẽ được lưu cục bộ trên máy (không đẩy lên Firebase).
+    document.getElementById('wc-mode-skip').onclick = ()=>{
+      if(!saveNameTitle()) return;
+      state.identity.wardId = ''; setActiveWardCache('');
+      state.config = null;
+      state._onboardingSkipWard = true;
+      state.view = 'onboarding';
+      render();
+    };
+    document.getElementById('wc-mode-new').onclick = ()=>{
+      const area = document.getElementById('wc-subarea');
+      area.innerHTML = `
+        <div class="divider-lbl">Tạo mã định danh cấp xã mới</div>
+        <div class="form-grid">
+          <div class="field"><label>Mã định danh mới *</label><input id="wc-new-id" placeholder="vd: xabinhminh" style="text-transform:lowercase;"></div>
+          <div class="field"><label>Mật khẩu (không bắt buộc)</label><input id="wc-new-pass" type="password"></div>
+        </div>
+        <button class="btn btn-primary btn-block" id="wc-new-confirm">Xác nhận tạo mã</button>`;
+      area.scrollIntoView({behavior:'smooth', block:'start'});
+      document.getElementById('wc-new-confirm').onclick = async ()=>{
+        if(!saveNameTitle()) return;
+        await createWardStrict(document.getElementById('wc-new-id').value, document.getElementById('wc-new-pass').value);
+      };
+    };
+    document.getElementById('wc-mode-join').onclick = ()=>{
+      const area = document.getElementById('wc-subarea');
+      area.innerHTML = `
+        <div class="divider-lbl">Tham gia bằng mã định danh đã có</div>
+        <div class="form-grid">
+          <div class="field"><label>Mã định danh *</label><input id="wc-join-id" placeholder="vd: xabinhminh" style="text-transform:lowercase;"></div>
+          <div class="field"><label>Mật khẩu (nếu có)</label><input id="wc-join-pass" type="password"></div>
+        </div>
+        <button class="btn btn-primary btn-block" id="wc-join-confirm">Tham gia bằng mã này</button>`;
+      area.scrollIntoView({behavior:'smooth', block:'start'});
+      document.getElementById('wc-join-confirm').onclick = async ()=>{
+        if(!saveNameTitle()) return;
+        await joinWardStrict(document.getElementById('wc-join-id').value, document.getElementById('wc-join-pass').value);
+      };
+    };
+    document.getElementById('wc-logout').onclick = async ()=>{ await auth.signOut(); };
+  }
+
+  // "Ví mã xã" — màn hình toàn trang, hiện khi chưa chọn mã xã nào để làm việc
+  // (sau khi đăng xuất mã xã, hoặc mã đang xem bị Chủ mã xoá/đổi mật khẩu).
+  function renderWallet(){
+    root.innerHTML = `
+      <div class="center-screen" style="align-items:flex-start; padding:40px 16px;">
+        <div class="auth-card" style="max-width:640px; text-align:left;">
+          <div class="rice-badge" style="margin:0 0 14px;">🗂️</div>
+          <h1 style="text-align:left;">Ví mã định danh cấp Xã/Phường</h1>
+          <p class="sub" style="text-align:left;">${state.identity.name} · ${state.identity.email}</p>
+          <div id="wallet-panel-mount"></div>
+          <button class="btn btn-ghost btn-block" id="wallet-logout" style="margin-top:18px;">Đăng xuất tài khoản Google</button>
+        </div>
+      </div>`;
+    renderWardWalletPanel(document.getElementById('wallet-panel-mount'), {embedded:false});
+    document.getElementById('wallet-logout').onclick = async ()=>{ await auth.signOut(); };
+  }
+
+  // Màn hình chờ duyệt — hiện khi tài khoản là KHÁCH của mã xã đang chọn nhưng Chủ mã
+  // chưa cấp quyền Xem/Sửa (và mã xã cũng không bật "Cho phép xem tự do").
+  function renderPendingScreen(){
+    root.innerHTML = `
+      <div class="center-screen">
+        <div class="auth-card">
+          <div class="rice-badge">⏳</div>
+          <h1>Quyền truy cập đang chờ duyệt</h1>
+          <p class="sub">Bạn đã tham gia mã xã <b>${wardId()}</b>${state.config&&state.config.wardName?` (${wardTitle()})`:''} với vai trò KHÁCH,
+            nhưng Chủ mã chưa cấp quyền Xem/Sửa cho tài khoản <b>${state.identity.email}</b>.</p>
+          <p class="sub">Vui lòng liên hệ Chủ mã để được cấp quyền tại mục "Cài đặt &amp; Chia sẻ" của họ.</p>
+          <button class="btn btn-primary btn-block" id="pd-wallet">↩ Quay lại Ví mã xã</button>
+          <button class="btn btn-ghost btn-block" id="pd-remove" style="margin-top:8px;">Xoá mã này khỏi tài khoản</button>
+        </div>
+      </div>`;
+    document.getElementById('pd-wallet').onclick = exitToWallet;
+    document.getElementById('pd-remove').onclick = ()=> guestRemoveWard(wardId());
+  }
+
+  // ---------------------------------------------------------------------
+  // Khối HTML/sự kiện dùng CHUNG cho "Ví mã xã" — tái sử dụng ở cả màn hình
+  // toàn trang (renderWallet) lẫn nhúng trong tab "Cài đặt & Chia sẻ".
+  // ---------------------------------------------------------------------
+  function renderWardWalletPanel(mountEl, opts){
+    const embedded = !!(opts && opts.embedded);
+    const rows = state.myWards.slice().sort((a,b)=> (a.wardName||a.wardId).localeCompare(b.wardName||b.wardId));
+    const rowHtml = w=>{
+      const active = wardId()===w.wardId;
+      const deleted = w.live && w.live.deleted;
+      const needsReauth = w.kind==='guest' && w.live && (w.live.accessVersion||0) !== (w.av||0) && !deleted;
+      return `
+        <div class="ward-row ${active?'active':''}" data-ward="${w.wardId}" style="display:flex; align-items:center; gap:10px; padding:11px 12px; border:1px solid var(--line); border-radius:10px; margin-bottom:8px; cursor:pointer; ${active?'background:rgba(47,74,60,.08); border-color:var(--rice-dark);':''}">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:700; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${w.wardName || `(chưa đặt tên) — ${w.wardId}`}</div>
+            <div class="sub" style="font-size:11.5px;">Mã: <span class="mono">${w.wardId}</span>${deleted?' · <span style="color:var(--red);">Đã bị Chủ mã xoá</span>':''}${needsReauth?' · <span style="color:var(--orange);">Cần nhập lại mật khẩu mới</span>':''}</div>
+          </div>
+          <span class="tag-role" style="background:${w.kind==='owner'?'#1f8a4c':'#1f6fa8'}; color:#fff; font-size:11px; padding:3px 9px; border-radius:20px; font-weight:700;">${w.kind==='owner'?'CHỦ MÃ':'KHÁCH'}</span>
+          <button class="btn btn-ghost btn-sm" data-ward-remove="${w.wardId}" title="${w.kind==='owner'?'Xoá mã này':'Xoá khỏi tài khoản'}">🗑️</button>
+        </div>`;
+    };
+    mountEl.innerHTML = `
+      <div class="divider-lbl">Các mã xã của tôi (${rows.length})</div>
+      ${rows.length? rows.map(rowHtml).join('') : '<div class="empty-state" style="padding:14px 0;">Bạn chưa sở hữu hoặc tham gia mã xã nào.</div>'}
+
+      <div class="divider-lbl">Thêm / Tham gia mã xã</div>
+      <div class="form-grid">
+        <div class="field"><label>Mã định danh cấp Xã/Phường</label><input id="ww-wardid" placeholder="vd: xabinhminh" style="text-transform:lowercase;"></div>
+        <div class="field"><label>Mật khẩu mã xã (nếu có)</label><input id="ww-pass" type="password" placeholder="Để trống nếu không có"></div>
+      </div>
+      <p class="sub" style="margin:-6px 0 12px;">Mã chưa tồn tại → bạn trở thành <b>CHỦ MÃ</b> và tạo mới. Mã đã có → bạn tham gia với vai trò <b>KHÁCH</b>.</p>
+      <button class="btn btn-primary ${embedded?'':'btn-block'}" id="ww-join">+ Tham gia / Tạo mã định danh cấp xã mới</button>
+
+      <div class="divider-lbl" id="ww-trash-toggle" style="cursor:pointer; user-select:none;">🗑️ Mã xã đã xoá của tôi (${state.myDeletedWards.length}) ${state.walletTrashOpen?'▴':'▾'}</div>
+      <div id="ww-trash-body" style="${state.walletTrashOpen?'':'display:none;'}">
+        ${state.myDeletedWards.length? state.myDeletedWards.map(d=>`
+          <div class="kv-row"><span>${d.wardName||'(chưa đặt tên)'} <span class="sub">(${d.wardId})</span></span>
+            <span style="display:flex; gap:8px;">
+              <button class="btn btn-ghost btn-sm" data-restore-ward="${d.wardId}">Khôi phục</button>
+              <button class="btn btn-ghost btn-sm" data-purge-ward="${d.wardId}" style="color:var(--red);">Xoá vĩnh viễn</button>
+            </span>
+          </div>`).join('') : '<div class="sub" style="padding:6px 0 14px;">Trống.</div>'}
+      </div>
+
+      ${isSiteOwner() ? `
+        <div class="divider-lbl">🛡️ Thùng rác hệ thống (Quản trị viên trang web)</div>
+        ${state.sysTrash.length? state.sysTrash.map(d=>`
+          <div class="kv-row"><span>${d.wardName||'(chưa đặt tên)'} <span class="sub">(${d.wardId} — chủ cũ: ${d.ownerEmail})</span></span>
+            <span style="display:flex; gap:8px;">
+              <button class="btn btn-ghost btn-sm" data-super-restore="${d.wardId}">Khôi phục cho chủ</button>
+              <button class="btn btn-ghost btn-sm" data-super-purge="${d.wardId}" style="color:var(--red);">Xoá vĩnh viễn</button>
+            </span>
+          </div>`).join('') : '<div class="sub" style="padding:6px 0 14px;">Trống.</div>'}
+      ` : ''}
+    `;
+
+    mountEl.querySelectorAll('.ward-row').forEach(rowEl=>{
+      rowEl.addEventListener('click', async (e)=>{
+        if(e.target.closest('[data-ward-remove]')) return;
+        const wid = rowEl.dataset.ward;
+        const w = state.myWards.find(x=>x.wardId===wid);
+        if(!w) return;
+        if(w.live && w.live.deleted){ alert('Mã xã này đã bị Chủ mã xoá.'); return; }
+        const needsReauth = w.kind==='guest' && w.live && (w.live.accessVersion||0) !== (w.av||0);
+        if(needsReauth){
+          const pass = prompt('Chủ mã đã đổi mật khẩu mã xã. Vui lòng nhập mật khẩu MỚI để tiếp tục:');
+          if(pass===null) return;
+          await joinOrCreateWard(wid, pass);
+          return;
+        }
+        await enterWard(wid);
+      });
+    });
+    mountEl.querySelectorAll('[data-ward-remove]').forEach(btn=>{
+      btn.onclick = async (e)=>{
+        e.stopPropagation();
+        const wid = btn.dataset.wardRemove;
+        const w = state.myWards.find(x=>x.wardId===wid);
+        if(w && w.kind==='owner') await ownerDeleteWard(wid);
+        else await guestRemoveWard(wid);
+        if(embedded){ /* renderSettingsTab tự render lại thông qua các hàm trên khi cần */ }
+      };
+    });
+    mountEl.querySelector('#ww-join').onclick = async ()=>{
+      const wid = mountEl.querySelector('#ww-wardid').value;
+      const pass = mountEl.querySelector('#ww-pass').value;
+      if(!wid.trim()){ alert('Vui lòng nhập mã xã.'); return; }
+      await joinOrCreateWard(wid, pass);
+    };
+    mountEl.querySelector('#ww-trash-toggle').onclick = ()=>{ state.walletTrashOpen = !state.walletTrashOpen; render(); };
+    mountEl.querySelectorAll('[data-restore-ward]').forEach(btn=> btn.onclick = ()=> restoreDeletedWard(btn.dataset.restoreWard));
+    mountEl.querySelectorAll('[data-purge-ward]').forEach(btn=> btn.onclick = ()=> purgeDeletedWardToSuperadmin(btn.dataset.purgeWard));
+    mountEl.querySelectorAll('[data-super-restore]').forEach(btn=> btn.onclick = ()=> superRestoreWard(btn.dataset.superRestore));
+    mountEl.querySelectorAll('[data-super-purge]').forEach(btn=> btn.onclick = ()=> superPurgeForever(btn.dataset.superPurge));
   }
 
   // Nhãn "Danh sách các ..." dùng ngay tại màn hình thiết lập lần đầu (trước khi state.config tồn tại)
@@ -970,13 +1586,26 @@
     return `Danh sách các ${label.toLowerCase()}`;
   }
 
+  // Màn hình "Thiết lập ban đầu" — dùng chung cho 2 luồng:
+  //   1) Vừa TẠO MÃ ĐỊNH DANH MỚI (createWardStrict) -> state.identity.wardId đã có, sẽ lưu lên Firebase.
+  //   2) Bấm "Bỏ qua thiết lập mã định danh" ở màn Welcome (state._onboardingSkipWard=true) -> không có
+  //      Mã định danh nào, dữ liệu bắt buộc sẽ được lưu CỤC BỘ trên máy (identity.localProfile) để dùng
+  //      tạm cho Thu–Chi nội bộ, và có thể tái sử dụng sau này nếu họ tạo/tham gia mã.
+  // Yêu cầu 3 & 4: tách rõ "Thông tin cơ bản (bắt buộc)" và "Thiết lập nâng cao (có thể bỏ qua)";
+  // cả 2 nút ở khối nâng cao đều dẫn tới cùng 1 kết quả — lưu dữ liệu bắt buộc + dữ liệu nâng cao (đã gõ
+  // hoặc mặc định nếu bỏ trống) rồi vào thẳng giao diện chính.
   function renderOnboarding(){
-    const cfg = state.config || { hamlets:[], projects:[], quarters:{
+    const skipWardMode = !!state._onboardingSkipWard && !wardId();
+    const lp = (state.identity && state.identity.localProfile) || {};
+    const cfg = state.config || { hamlets: lp.hamlets||[], projects: lp.projects||[], quarters: lp.quarters || {
       q1:{label:'Quý 1', start:'2026-01-01', end:'2026-03-31'}, q2:{label:'Quý 2', start:'2026-04-01', end:'2026-06-30'},
       q3:{label:'Quý 3', start:'2026-07-01', end:'2026-09-30'}, q4:{label:'Quý 4', start:'2026-10-01', end:'2026-12-31'}
-    }, retainPercent:30, wardName:'', adminLevel:'Xã', subAdminType:'Ấp', subAdminCustom:'', ownerEmail: state.identity.email, officerTitle:'' };
+    }, retainPercent: (lp.retainPercent!=null? lp.retainPercent : 30), wardName: lp.wardName||'', adminLevel: lp.adminLevel||'Xã',
+      subAdminType: lp.subAdminType||'Ấp', subAdminCustom: lp.subAdminCustom||'', provinceType: lp.provinceType||'', provinceName: lp.provinceName||'',
+      ownerEmail: state.identity.email, officerTitle: lp.officerTitle||'' };
     const curLevel = ADMIN_LEVEL_OPTIONS.includes(cfg.adminLevel) ? cfg.adminLevel : 'Xã';
     const curSub = SUB_ADMIN_OPTIONS.includes(cfg.subAdminType) ? cfg.subAdminType : 'Ấp';
+    const curProvinceType = PROVINCE_TYPE_OPTIONS.includes(cfg.provinceType) ? cfg.provinceType : 'Tỉnh';
     root.innerHTML = `
       <div class="center-screen">
         <div class="auth-card" style="max-width:640px; text-align:left;">
@@ -984,55 +1613,82 @@
           <h1 style="text-align:left;">Thiết lập cơ sở dữ liệu lõi</h1>
           <p class="sub" style="text-align:left;">Thiết lập lần đầu cho địa phương — có thể chỉnh sửa lại sau trong mục Cài đặt.</p>
 
-          <div class="divider-lbl">Loại hình hành chính</div>
+          ${skipWardMode? `
+          <div style="background:var(--paper-2); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:4px;">
+            <b style="font-size:13px; color:var(--rice-dark);">Bạn đã chọn bỏ qua bước kết nối Mã định danh cấp Xã.</b>
+            <p class="sub" style="margin:4px 0 0; font-size:11.5px;">Thông tin bên dưới sẽ được lưu trên thiết bị này để dùng cho phần Thu–Chi nội bộ. Bạn có thể tạo hoặc tham gia Mã định danh bất cứ lúc nào sau này (mục "🗂️ Chọn / thêm mã xã").</p>
+          </div>` : ''}
+
+          <div class="divider-lbl" id="ob-required-anchor">📌 Thông tin cơ bản (bắt buộc)</div>
           <div class="form-grid">
-            <div class="field"><label>Cấp quản lý *</label>
+            <div class="field"><label>Loại xã/phường *</label>
               <select id="ob-adminlevel">${ADMIN_LEVEL_OPTIONS.map(o=>`<option value="${o}" ${curLevel===o?'selected':''}>${o}</option>`).join('')}</select>
             </div>
-            <div class="field"><label id="ob-ward-label">Tên riêng (${curLevel})</label><input id="ob-ward" placeholder="Ví dụ: Hưng Phước, Bình Minh..." value="${cfg.wardName||''}"></div>
-            <div class="field"><label>Cấp cơ sở trực thuộc *</label>
+            <div class="field"><label id="ob-ward-label">Tên riêng (${curLevel}) *</label><input id="ob-ward" placeholder="Ví dụ: Hưng Phước, Bình Minh..." value="${cfg.wardName||''}"></div>
+            <div class="field"><label>Loại tỉnh/thành phố *</label>
+              <select id="ob-provincetype">${PROVINCE_TYPE_OPTIONS.map(o=>`<option value="${o}" ${curProvinceType===o?'selected':''}>${o}</option>`).join('')}</select>
+            </div>
+            <div class="field"><label>Tên tỉnh/thành phố *</label><input id="ob-provincename" placeholder="Ví dụ: Bình Phước, Cần Thơ..." value="${cfg.provinceName||''}"></div>
+            <div class="field"><label>Loại khu dân cư cấp dưới *</label>
               <select id="ob-subadmin">${SUB_ADMIN_OPTIONS.map(o=>`<option value="${o}" ${curSub===o?'selected':''}>${o}</option>`).join('')}</select>
             </div>
             <div class="field" id="ob-subadmin-custom-wrap" style="${curSub==='Khác'?'':'display:none;'}">
               <label>Tên gọi khác (tự điền) *</label>
               <input id="ob-subadmin-custom" placeholder="Ví dụ: Buôn, Bản, Sóc..." value="${cfg.subAdminCustom||''}">
             </div>
-            <div class="field"><label>Chức vụ cán bộ</label><input id="ob-title" placeholder="Chủ tịch Hội Nông dân..." value="${cfg.officerTitle||''}"></div>
-            <div class="field full">
-              <label>Mã định danh cấp Xã/Phường (đường dẫn lưu dữ liệu trên đám mây) *</label>
-              <input id="ob-wardid" placeholder="vd: xabinhminh" value="${state.identity.wardId||''}" style="text-transform:lowercase;">
-              <p class="sub" style="margin:4px 0 0; font-size:11.5px;">
-                Dữ liệu sẽ lưu tại <span class="mono">data/${state.identity.wardId||'...'}/...</span> trên Firebase. Hãy cung cấp đúng mã này cho các cán bộ khác để họ đăng nhập vào chung dữ liệu. Chỉ gồm chữ thường, số, gạch dưới/gạch ngang.
-              </p>
+            <div class="field"><label>Chức vụ cán bộ</label><input id="ob-title" placeholder="Chủ tịch Hội Nông dân... (có thể để trống)" value="${cfg.officerTitle||''}"></div>
+          </div>
+
+          ${!skipWardMode? `
+          <div class="field full" style="margin-top:4px;">
+            <label>Mã định danh cấp Xã/Phường (đường dẫn lưu dữ liệu trên đám mây)</label>
+            <input value="${state.identity.wardId||''}" disabled style="text-transform:lowercase; opacity:.75;">
+            <p class="sub" style="margin:4px 0 0; font-size:11.5px;">
+              Dữ liệu sẽ lưu tại <span class="mono">data/${state.identity.wardId||'...'}/...</span> trên Firebase. Hãy cung cấp đúng mã này (và mật khẩu, nếu bạn đặt) cho các cán bộ khác để họ tham gia chung dữ liệu.
+            </p>
+          </div>` : ''}
+
+          <div style="border:1px dashed var(--gold); border-radius:12px; padding:14px 16px; margin-top:20px; background:rgba(199,154,43,.06);">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px;">
+              <b style="font-size:13.5px; color:var(--rice-dark);">⚙️ Thiết lập nâng cao</b>
+            </div>
+            <p class="sub" style="margin:0 0 12px; font-size:11.5px;">💡 Có thể bỏ qua và thiết lập sau trong phần Cài đặt. Các mục dưới đây có thể để trống hoặc để mặc định.</p>
+
+            <div class="divider-lbl" id="ob-hamlets-divider">${subAdminListLabelLocal(curSub, cfg.subAdminCustom)}</div>
+            <div class="field"><textarea id="ob-hamlets" rows="2" placeholder="${curSub} 1, ${curSub} 2, ${curSub} 3...">${(cfg.hamlets||[]).join(', ')}</textarea></div>
+            <p class="sub" style="margin:-6px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p>
+
+            <div class="divider-lbl">Phương án vay vốn hiện hành</div>
+            <div class="field"><textarea id="ob-projects" rows="2" placeholder="Phương án vay chăn nuôi bò, Phương án vay trồng rau sạch...">${(cfg.projects||[]).join(', ')}</textarea></div>
+            <p class="sub" style="margin:-6px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p>
+
+            <div class="divider-lbl">Mốc thời gian 4 Quý trong năm</div>
+            <div class="form-grid">
+              ${['q1','q2','q3','q4'].map(q=>`
+                <div style="border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:var(--white);">
+                  <label style="font-size:12.5px; font-weight:700; color:var(--rice-dark);">${cfg.quarters[q].label}</label>
+                  <div style="display:flex; gap:8px; margin-top:6px;">
+                    <input type="date" id="ob-${q}-start" value="${cfg.quarters[q].start||''}">
+                    <input type="date" id="ob-${q}-end" value="${cfg.quarters[q].end||''}">
+                  </div>
+                </div>`).join('')}
+            </div>
+
+            <div class="divider-lbl" id="ob-retain-divider">Tỷ lệ giữ lại tại ${curSub.toLowerCase()}</div>
+            <div class="field"><input type="number" id="ob-retain" value="${cfg.retainPercent}" min="0" max="100"> <span class="sub" id="ob-retain-sub">% tổng lãi ${curSub.toLowerCase()} thu được — phần còn lại nộp lên ${curLevel.toLowerCase()}</span></div>
+
+            <div style="display:flex; gap:10px; margin-top:14px;">
+              <button class="btn btn-ghost" id="ob-skip" style="flex:1;">Bỏ qua, thiết lập sau</button>
+              <button class="btn btn-primary" id="ob-save" style="flex:1;">Lưu và tiếp tục</button>
             </div>
           </div>
-
-          <div class="divider-lbl" id="ob-hamlets-divider">${subAdminListLabelLocal(curSub, cfg.subAdminCustom)}</div>
-          <div class="field"><textarea id="ob-hamlets" rows="2" placeholder="${curSub} 1, ${curSub} 2, ${curSub} 3...">${(cfg.hamlets||[]).join(', ')}</textarea></div>
-          <p class="sub" style="margin:-6px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p>
-
-          <div class="divider-lbl">Phương án vay vốn hiện hành</div>
-          <div class="field"><textarea id="ob-projects" rows="2" placeholder="Phương án vay chăn nuôi bò, Phương án vay trồng rau sạch...">${(cfg.projects||[]).join(', ')}</textarea></div>
-          <p class="sub" style="margin:-6px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p>
-
-          <div class="divider-lbl">Mốc thời gian 4 Quý trong năm</div>
-          <div class="form-grid">
-            ${['q1','q2','q3','q4'].map(q=>`
-              <div style="border:1px solid var(--line); border-radius:10px; padding:10px 12px;">
-                <label style="font-size:12.5px; font-weight:700; color:var(--rice-dark);">${cfg.quarters[q].label}</label>
-                <div style="display:flex; gap:8px; margin-top:6px;">
-                  <input type="date" id="ob-${q}-start" value="${cfg.quarters[q].start||''}">
-                  <input type="date" id="ob-${q}-end" value="${cfg.quarters[q].end||''}">
-                </div>
-              </div>`).join('')}
-          </div>
-
-          <div class="divider-lbl" id="ob-retain-divider">Tỷ lệ giữ lại tại ${curSub.toLowerCase()}</div>
-          <div class="field"><input type="number" id="ob-retain" value="${cfg.retainPercent}" min="0" max="100"> <span class="sub" id="ob-retain-sub">% tổng lãi ${curSub.toLowerCase()} thu được — phần còn lại nộp lên ${curLevel.toLowerCase()}</span></div>
-
-          <button class="btn btn-primary btn-block" id="ob-save" style="margin-top:8px;">Hoàn tất thiết lập</button>
         </div>
       </div>`;
+
+    // Ép trình duyệt cuộn xuống phần "Thông tin cơ bản (bắt buộc)" ngay khi vào màn hình này
+    // (chỉ đến được đây sau khi bấm [Tạo mã định danh mới] hoặc [Bỏ qua thiết lập mã định danh] — yêu cầu 3).
+    const anchorEl = document.getElementById('ob-required-anchor');
+    if(anchorEl) setTimeout(()=> anchorEl.scrollIntoView({behavior:'smooth', block:'start'}), 60);
 
     // ---- cập nhật động các nhãn/placeholder khi người dùng đổi cấu hình danh xưng ----
     function currentSubLabel(){
@@ -1044,7 +1700,7 @@
       const level = document.getElementById('ob-adminlevel').value;
       const sub = currentSubLabel();
       document.getElementById('ob-subadmin-custom-wrap').style.display = document.getElementById('ob-subadmin').value==='Khác' ? '' : 'none';
-      document.getElementById('ob-ward-label').textContent = `Tên riêng (${level})`;
+      document.getElementById('ob-ward-label').textContent = `Tên riêng (${level}) *`;
       document.getElementById('ob-hamlets-divider').textContent = `Danh sách các ${sub.toLowerCase()}`;
       document.getElementById('ob-hamlets').placeholder = `${sub} 1, ${sub} 2, ${sub} 3...`;
       document.getElementById('ob-retain-divider').textContent = `Tỷ lệ giữ lại tại ${sub.toLowerCase()}`;
@@ -1054,21 +1710,31 @@
     document.getElementById('ob-subadmin').onchange = refreshAdminLabels;
     document.getElementById('ob-subadmin-custom').oninput = refreshAdminLabels;
 
-    document.getElementById('ob-save').onclick = async ()=>{
-      const wid = document.getElementById('ob-wardid').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
-      if(!wid || wid.length<3){ alert('Vui lòng nhập Mã định danh hợp lệ (tối thiểu 3 ký tự, chỉ gồm chữ thường/số/gạch dưới/gạch ngang).'); return; }
+    // ---- Yêu cầu 3: kiểm tra đầy đủ "Thông tin cơ bản bắt buộc" trước khi được đi tiếp ----
+    // Dùng CHUNG cho cả 2 nút [Bỏ qua, thiết lập sau] / [Lưu và tiếp tục] — theo yêu cầu 4,
+    // cả 2 nút phải bắt buộc đủ thông tin cơ bản như nhau, chỉ phần "nâng cao" là được phép trống.
+    function validateRequired(){
+      const wardNameVal = document.getElementById('ob-ward').value.trim();
+      const provinceNameVal = document.getElementById('ob-provincename').value.trim();
       const subAdminType = document.getElementById('ob-subadmin').value;
       const subAdminCustom = document.getElementById('ob-subadmin-custom').value.trim();
-      if(subAdminType==='Khác' && !subAdminCustom){ alert('Vui lòng nhập tên gọi khác cho cấp cơ sở trực thuộc.'); return; }
-      // Nếu đổi mã so với lúc đăng nhập, cập nhật lại identity cục bộ (localStorage) trước khi ghi lên Firebase
-      if(wid !== state.identity.wardId){
-        state.identity = {...state.identity, wardId: wid};
-        lset(IDENTITY_KEY, state.identity);
-      }
-      const newCfg = {
-        wardName: document.getElementById('ob-ward').value.trim(),
+      if(!wardNameVal){ alert(`Vui lòng nhập Tên riêng (${document.getElementById('ob-adminlevel').value}).`); document.getElementById('ob-ward').focus(); return null; }
+      if(!provinceNameVal){ alert('Vui lòng nhập Tên tỉnh/thành phố.'); document.getElementById('ob-provincename').focus(); return null; }
+      if(subAdminType==='Khác' && !subAdminCustom){ alert('Vui lòng nhập tên gọi khác cho cấp cơ sở trực thuộc.'); document.getElementById('ob-subadmin-custom').focus(); return null; }
+      return { wardNameVal, provinceNameVal, subAdminType, subAdminCustom };
+    }
+
+    // ---- Yêu cầu 4: cả 2 nút cùng chung 1 kết quả — lưu dữ liệu bắt buộc + dữ liệu nâng cao
+    // (đã gõ hoặc mặc định nếu để trống), rồi vào ngay giao diện chính ----
+    async function finishOnboarding(){
+      const req = validateRequired();
+      if(!req) return;
+      const baseFields = {
+        wardName: req.wardNameVal,
         adminLevel: document.getElementById('ob-adminlevel').value,
-        subAdminType, subAdminCustom,
+        provinceType: document.getElementById('ob-provincetype').value,
+        provinceName: req.provinceNameVal,
+        subAdminType: req.subAdminType, subAdminCustom: req.subAdminCustom,
         officerTitle: document.getElementById('ob-title').value.trim(),
         hamlets: document.getElementById('ob-hamlets').value.split(',').map(s=>s.trim()).filter(Boolean),
         projects: document.getElementById('ob-projects').value.split(',').map(s=>s.trim()).filter(Boolean),
@@ -1079,55 +1745,117 @@
           q4:{label:'Quý 4', start:document.getElementById('ob-q4-start').value, end:document.getElementById('ob-q4-end').value},
         },
         retainPercent: parseFloat(document.getElementById('ob-retain').value)||0,
+      };
+
+      if(skipWardMode){
+        // Không có Mã định danh -> lưu CỤC BỘ trên thiết bị (không đẩy lên Firebase)
+        state.identity.localProfile = { ...baseFields, savedAt: new Date().toISOString() };
+        lset(IDENTITY_KEY, state.identity);
+        lset(seenWelcomeKey(state.identity.email), true);
+        delete state._onboardingSkipWard;
+        state.view = 'app';
+        state.activeTab = 'internal';
+        render();
+        return;
+      }
+
+      const newCfg = {
+        ...baseFields,
         ownerEmail: cfg.ownerEmail,
+        // ---- đa mã xã: mật khẩu mã (không bắt buộc) + trạng thái xoá ----
+        accessCode: state._pendingAccessCode || '',
+        accessVersion: 0,
+        deleted: false,
+        // ---- phân quyền chia sẻ (Loại 1 công khai / Loại 2 đích danh) — mặc định chưa chia sẻ gì ----
+        publicPerms: {data:'none', members:'none', strength:'none', internal:'none'},
+        grants: {},
+        // ---- "Mã ẩn" cố định, không đổi dù đổi tên/mã định danh sau này — phục vụ quản lý VIP/PRO ----
+        secretId: state._pendingSecretId || genSecretId(),
       };
       state.config = newCfg;
       await cSet('config', newCfg); // ghi lên data/{wardId}/config trên Firebase
+      delete state._pendingAccessCode;
+      delete state._pendingSecretId;
+      // Cập nhật lại tên hiển thị của mã này trong Ví mã xã của Chủ mã
+      await rtdb.ref(`users/${emailToKey(state.identity.email)}/wards/${wardId()}`).set({kind:'owner', wardName:req.wardNameVal, addedAt:new Date().toISOString()});
       state.view = 'app';
       attachRealtime();
       render();
-    };
+    }
+
+    document.getElementById('ob-save').onclick = finishOnboarding;
+    document.getElementById('ob-skip').onclick = finishOnboarding;
   }
 
   function navItems(){
-    const alerts = computeAlerts();
-    const counts = dashboardCounts(alerts);
-    const totalWarn = counts.yellow+counts.orange+counts.red;
-    return [
-      {id:'dashboard', ico:'📊', label:'Tổng quan'},
-      {id:'data', ico:'📋', label:'Sổ vay vốn'},
-      {id:'expenses', ico:'💰', label:`Chi tiêu & Hạch toán ${adminLevelLabel()}`},
-      {id:'reports', ico:'🧾', label:'Báo cáo lãi'},
-      {id:'internal', ico:'🔒', label:'Thu – Chi nội bộ'},
-      {id:'members', ico:'🪪', label:'Hồ sơ hội viên'},
-      {id:'strength', ico:'💪', label:'Thực lực Hội'},
-      {id:'trash', ico:'🗑️', label:'Thùng rác', badge: state.trash.length||null},
-      {id:'log', ico:'🕘', label:'Nhật ký hoạt động'},
-      {id:'settings', ico:'⚙️', label:'Cài đặt & Chia sẻ'},
-      {id:'guide', ico:'📖', label:'Hướng dẫn sử dụng'},
-      {id:'about', ico:'ℹ️', label:'Thông tin phần mềm'},
-    ];
+    if(!wardId()){
+      return [
+        {id:'internal', ico:'🔒', label:'Thu – Chi nội bộ'},
+        {id:'guide', ico:'📖', label:'Hướng dẫn sử dụng'},
+        {id:'about', ico:'ℹ️', label:'Thông tin phần mềm'},
+      ];
+    }
+    const items = [];
+    if(canViewModule('data')){
+      items.push({id:'dashboard', ico:'📊', label:'Tổng quan'});
+      items.push({id:'data', ico:'📋', label:'Sổ vay vốn'});
+      items.push({id:'expenses', ico:'💰', label:`Chi tiêu & Hạch toán ${adminLevelLabel()}`});
+      items.push({id:'reports', ico:'🧾', label:'Báo cáo lãi'});
+      items.push({id:'trash', ico:'🗑️', label:'Thùng rác', badge: state.trash.length||null});
+    }
+    if(canViewModule('internal')) items.push({id:'internal', ico:'🔒', label:'Thu – Chi nội bộ'});
+    if(canViewModule('members')) items.push({id:'members', ico:'🪪', label:'Hồ sơ hội viên'});
+    if(canViewModule('strength')) items.push({id:'strength', ico:'💪', label:'Thực lực Hội'});
+    if(isOwner()) items.push({id:'log', ico:'🕘', label:'Nhật ký hoạt động'});
+    if(isOwner() || settingsPerm()!=='none') items.push({id:'settings', ico:'⚙️', label:'Cài đặt & Chia sẻ'});
+    items.push({id:'guide', ico:'📖', label:'Hướng dẫn sử dụng'});
+    items.push({id:'about', ico:'ℹ️', label:'Thông tin phần mềm'});
+    return items;
+  }
+
+  function describeAccess(){
+    if(state.previewMode) return 'Môi trường tham quan';
+    if(!wardId()) return 'Chưa chọn mã xã';
+    if(!state.identity.email) return 'Khách qua mã (không đăng nhập)';
+    if(isOwner()) return 'Chủ mã (CHỦ MÃ)';
+    if(isPending()) return 'Đang chờ Chủ mã duyệt';
+    return 'Khách — đã được cấp quyền';
   }
 
   function renderApp(){
-    const role = myRole();
-    const alerts = computeAlerts();
+    const nav = navItems();
+    if(!nav.some(n=>n.id===state.activeTab)) state.activeTab = nav.length? nav[0].id : 'guide';
+    const roleLabel = describeAccess();
+    const alerts = wardId() ? computeAlerts() : [];
+    const hasIdentityEmail = !!(state.identity && state.identity.email);
     root.innerHTML = `
+      ${state.previewMode? `
+      <div class="preview-banner">
+        ⚠️ Bạn đang ở môi trường tham quan. Hãy chọn <button class="link-btn" id="pv-login">Đăng nhập hoặc Tham gia bằng mã</button> để sử dụng;
+        hoặc <button class="link-btn" id="pv-guide">Xem hướng dẫn sử dụng website</button>.
+      </div>` : ''}
       <div class="app-shell">
         <div class="sidebar">
-          <div class="brand"><div class="ico">🌾</div><div class="txt">Hội Nông dân<small>${wardTitle()}</small></div></div>
-          ${navItems().map(n=>`
+          <div class="brand"><div class="ico">🌾</div><div class="txt">Hội Nông dân<small>${wardTitle()||'Chưa chọn mã xã'}</small></div></div>
+          ${nav.map(n=>`
             <button class="nav-item ${state.activeTab===n.id?'active':''}" data-tab="${n.id}">
               <span>${n.ico}</span><span>${n.label}</span>
               ${n.badge?`<span class="badge">${n.badge}</span>`:''}
             </button>`).join('')}
-          <div class="foot">Đăng nhập: ${state.identity.email}<br>Vai trò: ${role==='owner'?'Chủ tài khoản':role==='editor'?'Cộng tác viên (sửa)':'Chỉ xem'}
-            <div style="margin-top:8px;"><button class="btn btn-ghost btn-sm" id="logout-btn" style="color:#fff; border-color:rgba(255,255,255,.3);">Đăng xuất</button></div>
+          <div class="foot">${state.identity.email?`Đăng nhập: ${state.identity.email}`:'Chưa đăng nhập Google'}<br>Vai trò: ${roleLabel}
+            <div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">
+              ${state.previewMode? '' : hasIdentityEmail
+                ? (wardId()? `<button class="btn btn-ghost btn-sm" id="ward-logout-btn" style="color:#fff; border-color:rgba(255,255,255,.3);">🔁 Đăng xuất cơ sở dữ liệu cấp xã</button>` : `<button class="btn btn-ghost btn-sm" id="ward-goto-wallet" style="color:#fff; border-color:rgba(255,255,255,.3);">🗂️ Chọn / thêm mã xã</button>`)
+                : `<button class="btn btn-ghost btn-sm" id="codeguest-logout-btn" style="color:#fff; border-color:rgba(255,255,255,.3);">↩ Rời mã xã này</button>`}
+              ${state.previewMode
+                ? `<button class="btn btn-ghost btn-sm" id="logout-btn" style="color:#fff; border-color:rgba(255,255,255,.3);">Thoát môi trường tham quan</button>`
+                : hasIdentityEmail? `<button class="btn btn-ghost btn-sm" id="logout-btn" style="color:#fff; border-color:rgba(255,255,255,.3);">Đăng xuất tài khoản Google</button>` : ''}
+            </div>
           </div>
         </div>
         <div class="main">
           <div class="topbar">
-            <div><h2>${navItems().find(n=>n.id===state.activeTab).label}</h2><div class="sub">${wardTitle()||`Chưa đặt tên ${adminLevelLabelLower()}`} · ${state.borrowers.filter(b=>!b.deleted).length} hộ vay đang theo dõi</div></div>
+            <div><h2>${nav.find(n=>n.id===state.activeTab).label}</h2><div class="sub">${wardTitle()||`Chưa chọn mã xã · chỉ dùng được Thu–Chi nội bộ`} ${wardId()?`· ${state.borrowers.filter(b=>!b.deleted).length} hộ vay đang theo dõi`:''}</div></div>
             <div class="top-actions">
               <button class="bell-btn" id="bell-btn">🔔${alerts.length?`<span class="bell-dot"></span>`:''}</button>
               <div class="avatar" ${state.identity.photo?`style="background-image:url('${state.identity.photo}'); background-size:cover; background-position:center;"`:''}>${state.identity.photo?'':(state.identity.name||'?')[0].toUpperCase()}</div>
@@ -1141,9 +1869,26 @@
       el.onclick = ()=>{ state.activeTab = el.dataset.tab; state.bellOpen=false; render(); };
     });
     document.getElementById('bell-btn').onclick = (e)=>{ e.stopPropagation(); state.bellOpen = !state.bellOpen; render(); };
-    document.getElementById('logout-btn').onclick = async ()=>{
+    const pvLogin = document.getElementById('pv-login');
+    if(pvLogin) pvLogin.onclick = exitPreviewMode;
+    const pvGuide = document.getElementById('pv-guide');
+    if(pvGuide) pvGuide.onclick = ()=>{ state.activeTab='guide'; render(); };
+    const wardLogoutBtn = document.getElementById('ward-logout-btn');
+    if(wardLogoutBtn) wardLogoutBtn.onclick = exitToWallet;
+    const gotoWalletBtn = document.getElementById('ward-goto-wallet');
+    if(gotoWalletBtn) gotoWalletBtn.onclick = async ()=>{ await loadWallet(); state.view='wallet'; render(); };
+    const codeGuestLogoutBtn = document.getElementById('codeguest-logout-btn');
+    if(codeGuestLogoutBtn) codeGuestLogoutBtn.onclick = ()=>{
       detachRealtime();
-      state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[]; state.collaborators={};
+      state.identity = null;
+      state.config=null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[];
+      state.view = 'login'; render();
+    };
+    const logoutBtn = document.getElementById('logout-btn');
+    if(logoutBtn) logoutBtn.onclick = async ()=>{
+      if(state.previewMode){ exitPreviewMode(); return; }
+      detachRealtime();
+      state.config = null; state.borrowers=[]; state.expenses=[]; state.trash=[]; state.log=[];
       await auth.signOut(); // auth.onAuthStateChanged (trong boot()) sẽ tự dọn identity & chuyển về màn hình đăng nhập
     };
     document.addEventListener('click', ()=>{ if(state.bellOpen){ state.bellOpen=false; render(); } }, {once:true});
@@ -1164,9 +1909,15 @@
 
     // Chỉ dựng modal khi chưa có modal nào đang mở trên màn hình — tránh bị
     // dựng chồng nhiều lớp modal mỗi khi có dữ liệu mới đẩy về qua realtime.
-    if(state.modal && !document.querySelector('.modal-bg')){
+    if(state.modal && !document.querySelector('.modal-bg') && !state.previewMode){
       if(state.modal.type==='expense') renderExpenseModal();
       else renderModal();
+    }
+
+    // Môi trường THAM QUAN: mọi nút bấm/ô nhập bên trong nội dung module đều bị vô hiệu hoá —
+    // người xem được phép chuyển tab thoải mái nhưng chỉ xem giao diện mẫu, không sửa được gì.
+    if(state.previewMode){
+      content.querySelectorAll('button, input, select, textarea').forEach(elx=>{ elx.disabled = true; });
     }
   }
 
@@ -1231,7 +1982,7 @@
         <div class="spacer"></div>
         <button class="btn btn-ghost btn-sm" id="exp-excel-btn">⬇️ Xuất file Excel Sổ Vay Vốn</button>
         <button class="btn btn-ghost btn-sm" id="exp-word-btn">⬇️ Xuất file Word</button>
-        ${canEdit()? `<button class="btn btn-primary" id="add-btn">+ Thêm hộ vay</button>` : ''}
+        ${canEditModule('data')? `<button class="btn btn-primary" id="add-btn">+ Thêm hộ vay</button>` : ''}
       </div>
       <div class="table-wrap">
         <table>
@@ -1243,7 +1994,7 @@
             ${list.length? list.map(b=>{
               const st = borrowerRowStatus(b);
               return `<tr>
-                <td><input type="checkbox" data-check="${b.id}" ${b.checked?'checked':''} ${canEdit()?'':'disabled'}></td>
+                <td><input type="checkbox" data-check="${b.id}" ${b.checked?'checked':''} ${canEditModule('data')?'':'disabled'}></td>
                 <td><b>${b.name}</b><div class="sub" style="color:#9A9580;">${b.cccd||''}</div></td>
                 <td>${b.hamlet||'—'}</td>
                 <td>${b.project||'—'}</td>
@@ -1340,7 +2091,7 @@
         <input id="e-search" placeholder="🔎 Tìm theo ghi chú, ${subAdminLabelLower()}..." value="${state.expSearch}" style="min-width:220px;">
         <select id="e-cat"><option value="">Tất cả mục đích chi</option>${EXPENSE_CATEGORIES.map(c=>`<option value="${c}" ${state.expFilterCat===c?'selected':''}>${categoryLabel(c)}</option>`).join('')}</select>
         <div class="spacer"></div>
-        ${canEdit()? `<button class="btn btn-primary" id="add-exp-btn">+ Thêm khoản chi mới</button>` : ''}
+        ${canEditModule('data')? `<button class="btn btn-primary" id="add-exp-btn">+ Thêm khoản chi mới</button>` : ''}
       </div>
 
       <div class="table-wrap">
@@ -1375,7 +2126,7 @@
     const e0 = state.modal.payload ? {...state.modal.payload} : emptyExpense();
     if(isCatHamlet(e0.purpose)) e0.purpose = CAT_HAMLET; // chuẩn hoá dữ liệu cũ (chữ Việt) về khoá nội bộ mới
     const hamlets = state.config.hamlets||[];
-    const readonly = !canEdit();
+    const readonly = !canEditModule('data');
     const wrap = document.createElement('div');
     wrap.className = 'modal-bg';
     wrap.innerHTML = `
@@ -1400,9 +2151,9 @@
           </div>
         </div>
         <div class="modal-foot">
-          ${(!isNew && canEdit()) ? `<button class="btn btn-danger" id="em-delete" style="margin-right:auto;">Xoá (chuyển vào thùng rác)</button>` : ''}
+          ${(!isNew && canEditModule('data')) ? `<button class="btn btn-danger" id="em-delete" style="margin-right:auto;">Xoá (chuyển vào thùng rác)</button>` : ''}
           <button class="btn btn-ghost" id="em-cancel">Đóng</button>
-          ${canEdit() ? `<button class="btn btn-primary" id="em-save">${isNew?'Thêm khoản chi':'Lưu thay đổi'}</button>` : ''}
+          ${canEditModule('data') ? `<button class="btn btn-primary" id="em-save">${isNew?'Thêm khoản chi':'Lưu thay đổi'}</button>` : ''}
         </div>
       </div>`;
     document.body.appendChild(wrap);
@@ -1703,7 +2454,7 @@
               <td>${trashLabel(item)}</td>
               <td>${item.deletedByName||item.deletedBy}</td><td>${new Date(item.deletedAt).toLocaleString('vi-VN')}</td>
               <td style="display:flex; gap:6px;">
-                ${(isOwner() || item.deletedBy===state.identity.email) ? `<button class="btn btn-ghost btn-sm" data-restore="${item.id}" data-kind="${kind}">↩ Khôi phục</button>`:''}
+                ${(isOwner() || canEditModule('data') || item.deletedBy===state.identity.email) ? `<button class="btn btn-ghost btn-sm" data-restore="${item.id}" data-kind="${kind}">↩ Khôi phục</button>`:''}
                 ${isOwner() ? `<button class="btn btn-danger btn-sm" data-purge="${item.id}" data-kind="${kind}">Xoá vĩnh viễn</button>`:''}
               </td>
             </tr>`;
@@ -1757,33 +2508,43 @@
 
   // Firebase Realtime Database không cho phép '.', '#', '$', '[', ']' trong key
   // -> mã hoá email thành key an toàn, và lưu email gốc trong chính bản ghi.
-  function emailToKey(email){ return email.replace(/[.#$\[\]]/g, c => ({'.':',', '#':'~h~', '$':'~d~', '[':'~lb~', ']':'~rb~'})[c]); }
+  function emailToKey(email){ return (email||'').replace(/[.#$\[\]]/g, c => ({'.':',', '#':'~h~', '$':'~d~', '[':'~lb~', ']':'~rb~'})[c]); }
 
   function renderSettingsTab(el){
     const cfg = state.config;
+    const canEditCore = canEditSettings();
     el.innerHTML = `
+      ${state.identity.email? `
+      <div class="panel"><div class="panel-head"><h3>🗂️ Ví mã định danh cấp Xã/Phường của tôi</h3></div>
+        <div class="panel-body" id="wallet-embed-mount"></div>
+      </div>` : ''}
+
       <div class="panel"><div class="panel-head"><h3>Thông tin địa phương</h3></div>
         <div class="panel-body">
           <div class="divider-lbl">Loại hình hành chính</div>
           <div class="form-grid">
             <div class="field"><label>Cấp quản lý *</label>
-              <select id="st-adminlevel" ${isOwner()?'':'disabled'}>${ADMIN_LEVEL_OPTIONS.map(o=>`<option value="${o}" ${adminLevelLabel()===o?'selected':''}>${o}</option>`).join('')}</select>
+              <select id="st-adminlevel" ${canEditCore?'':'disabled'}>${ADMIN_LEVEL_OPTIONS.map(o=>`<option value="${o}" ${adminLevelLabel()===o?'selected':''}>${o}</option>`).join('')}</select>
             </div>
-            <div class="field"><label id="st-ward-label">Tên riêng (${adminLevelLabel()})</label><input id="st-ward" value="${cfg.wardName||''}" ${isOwner()?'':'disabled'}></div>
+            <div class="field"><label id="st-ward-label">Tên riêng (${adminLevelLabel()})</label><input id="st-ward" value="${cfg.wardName||''}" ${canEditCore?'':'disabled'}></div>
+            <div class="field"><label>Loại tỉnh/thành phố *</label>
+              <select id="st-provincetype" ${canEditCore?'':'disabled'}>${PROVINCE_TYPE_OPTIONS.map(o=>`<option value="${o}" ${(PROVINCE_TYPE_OPTIONS.includes(cfg.provinceType)?cfg.provinceType:'Tỉnh')===o?'selected':''}>${o}</option>`).join('')}</select>
+            </div>
+            <div class="field"><label>Tên tỉnh/thành phố *</label><input id="st-provincename" value="${cfg.provinceName||''}" ${canEditCore?'':'disabled'}></div>
             <div class="field"><label>Cấp cơ sở trực thuộc *</label>
-              <select id="st-subadmin" ${isOwner()?'':'disabled'}>${SUB_ADMIN_OPTIONS.map(o=>`<option value="${o}" ${(SUB_ADMIN_OPTIONS.includes(cfg.subAdminType)?cfg.subAdminType:'Ấp')===o?'selected':''}>${o}</option>`).join('')}</select>
+              <select id="st-subadmin" ${canEditCore?'':'disabled'}>${SUB_ADMIN_OPTIONS.map(o=>`<option value="${o}" ${(SUB_ADMIN_OPTIONS.includes(cfg.subAdminType)?cfg.subAdminType:'Ấp')===o?'selected':''}>${o}</option>`).join('')}</select>
             </div>
             <div class="field" id="st-subadmin-custom-wrap" style="${cfg.subAdminType==='Khác'?'':'display:none;'}">
               <label>Tên gọi khác (tự điền) *</label>
-              <input id="st-subadmin-custom" value="${cfg.subAdminCustom||''}" ${isOwner()?'':'disabled'}>
+              <input id="st-subadmin-custom" value="${cfg.subAdminCustom||''}" ${canEditCore?'':'disabled'}>
             </div>
           </div>
           <div class="divider-lbl">Thông tin chung</div>
           <div class="form-grid">
-            <div class="field"><label id="st-retain-label">Tỷ lệ ${subAdminLabelLower()} giữ lại (%)</label><input type="number" id="st-retain" value="${cfg.retainPercent}" ${isOwner()?'':'disabled'}></div>
-            <div class="field full"><label id="st-hamlets-label">${subAdminListLabel()}</label><textarea id="st-hamlets" rows="2" ${isOwner()?'':'disabled'}>${(cfg.hamlets||[]).join(', ')}</textarea>
+            <div class="field"><label id="st-retain-label">Tỷ lệ ${subAdminLabelLower()} giữ lại (%)</label><input type="number" id="st-retain" value="${cfg.retainPercent}" ${canEditCore?'':'disabled'}></div>
+            <div class="field full"><label id="st-hamlets-label">${subAdminListLabel()}</label><textarea id="st-hamlets" rows="2" ${canEditCore?'':'disabled'}>${(cfg.hamlets||[]).join(', ')}</textarea>
               <p class="sub" style="margin:4px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p></div>
-            <div class="field full"><label>Danh sách phương án vay</label><textarea id="st-projects" rows="2" ${isOwner()?'':'disabled'}>${(cfg.projects||[]).join(', ')}</textarea>
+            <div class="field full"><label>Danh sách phương án vay</label><textarea id="st-projects" rows="2" ${canEditCore?'':'disabled'}>${(cfg.projects||[]).join(', ')}</textarea>
               <p class="sub" style="margin:4px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p></div>
           </div>
           <div class="divider-lbl">Mốc 4 quý</div>
@@ -1792,38 +2553,94 @@
               <div style="border:1px solid var(--line); border-radius:10px; padding:10px 12px;">
                 <label style="font-size:12.5px; font-weight:700; color:var(--rice-dark);">${cfg.quarters[q].label}</label>
                 <div style="display:flex; gap:8px; margin-top:6px;">
-                  <input type="date" id="st-${q}-start" value="${cfg.quarters[q].start||''}" ${isOwner()?'':'disabled'}>
-                  <input type="date" id="st-${q}-end" value="${cfg.quarters[q].end||''}" ${isOwner()?'':'disabled'}>
+                  <input type="date" id="st-${q}-start" value="${cfg.quarters[q].start||''}" ${canEditCore?'':'disabled'}>
+                  <input type="date" id="st-${q}-end" value="${cfg.quarters[q].end||''}" ${canEditCore?'':'disabled'}>
                 </div>
               </div>`).join('')}
           </div>
-          ${isOwner()? `<button class="btn btn-primary" id="st-save" style="margin-top:16px;">Lưu thay đổi</button>` : `<p class="sub" style="margin-top:12px;">Chỉ chủ tài khoản mới có quyền chỉnh sửa cấu hình lõi.</p>`}
+          ${canEditCore? `<button class="btn btn-primary" id="st-save" style="margin-top:16px;">Lưu thay đổi</button>` : `<p class="sub" style="margin-top:12px;">Bạn chỉ được cấp quyền XEM cấu hình này — chỉ Chủ mã (hoặc người được Chủ mã cấp quyền Sửa "Cài đặt của mã định danh") mới lưu được thay đổi.</p>`}
         </div>
       </div>
 
-      <div class="panel"><div class="panel-head"><h3>Chia sẻ quyền truy cập</h3></div>
+      ${isOwner() ? `
+      <div class="panel"><div class="panel-head"><h3>🔗 Chia sẻ quyền truy cập</h3></div>
         <div class="panel-body">
-          <div class="kv-row"><span>Chủ tài khoản</span><span class="tag-role owner">Owner</span></div>
-          <div class="kv-row"><span>${cfg.ownerEmail}</span><span></span></div>
-          ${Object.entries(state.collaborators).map(([key,c])=>`
-            <div class="kv-row"><span>${c.name||c.email||key} <span class="sub">(${c.email||key})</span></span>
-              <span style="display:flex; gap:8px; align-items:center;">
-                <span class="tag-role ${c.role}">${c.role==='editor'?'Editor':'Viewer'}</span>
-                ${isOwner()?`<button class="btn btn-ghost btn-sm" data-rm="${key}">Gỡ</button>`:''}
-              </span>
-            </div>`).join('')}
-          ${isOwner() ? `
-            <div class="divider-lbl">Thêm cộng tác viên</div>
-            <div class="toolbar">
-              <input id="cb-email" placeholder="email@gmail.com" style="min-width:220px;">
-              <select id="cb-role"><option value="viewer">Chỉ xem (Viewer)</option><option value="editor">Sửa (Editor)</option></select>
-              <button class="btn btn-primary btn-sm" id="cb-add">+ Thêm</button>
-            </div>
-            <p class="sub">Người được thêm sẽ có đúng vai trò này khi đăng nhập bằng email tương ứng.</p>
-          ` : ''}
-        </div>
-      </div>
+          <div class="divider-lbl">Loại 1 — Chia sẻ chung theo Mã định danh (công khai)</div>
+          <p class="sub" style="margin-top:-4px;">Áp dụng cho BẤT KỲ ai vào bằng đúng Mã định danh + mật khẩu này — kể cả chưa đăng nhập Google (khách qua mã ở màn hình đăng nhập).</p>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Mục dữ liệu</th><th>Quyền</th></tr></thead>
+            <tbody>
+              ${SHARE_MODULES.map(m=>`
+                <tr><td>${m.label}</td><td>
+                  <select data-public-perm="${m.key}">${PERM_OPTIONS.map(p=>`<option value="${p.v}" ${(cfg.publicPerms&&cfg.publicPerms[m.key]||'none')===p.v?'selected':''}>${p.label}</option>`).join('')}</select>
+                </td></tr>`).join('')}
+            </tbody>
+          </table></div>
 
+          <div class="divider-lbl">Loại 2 — Chia sẻ đích danh theo tài khoản (Email)</div>
+          <p class="sub" style="margin-top:-4px;">Cấp quyền RIÊNG cho một tài khoản Google cụ thể — có thể cao hơn hoặc thấp hơn Loại 1 công khai.</p>
+          ${Object.values(cfg.grants||{}).length? Object.values(cfg.grants||{}).map(g=>{
+              const isPendingGrant = !!g.autoAdded && SHARE_MODULES.every(m=>(g[m.key]||'none')==='none') && (g.settings||'none')==='none';
+              return `
+            <div style="border:1px solid ${isPendingGrant?'var(--gold)':'var(--line)'}; border-radius:10px; padding:12px; margin-bottom:10px; ${isPendingGrant?'background:rgba(199,154,43,.06);':''}">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+                <div>
+                  <b style="font-size:13.5px;">${g.name? `${g.name} ` : ''}<span class="sub" style="font-weight:400;">${g.email}</span></b><br>
+                  ${isPendingGrant? `<span class="tag-role" style="background:var(--gold); color:#3A2C05; font-size:10.5px; padding:2px 8px; border-radius:20px; font-weight:700;">🆕 Mới tham gia bằng mã — bấm chọn quyền bên dưới</span>` : (g.autoAdded? `<span class="sub" style="font-size:11px;">Tự động thêm khi tham gia bằng mã định danh</span>` : '')}
+                </div>
+                <button class="btn btn-ghost btn-sm" data-grant-remove="${emailToKey(g.email)}">Gỡ hoàn toàn</button>
+              </div>
+              <div class="table-wrap"><table>
+                <thead><tr><th>Mục dữ liệu</th><th>Quyền</th></tr></thead>
+                <tbody>
+                  ${SHARE_MODULES.map(m=>`
+                    <tr><td>${m.label}</td><td>
+                      <select data-grant-perm="${emailToKey(g.email)}" data-grant-module="${m.key}">${PERM_OPTIONS.map(p=>`<option value="${p.v}" ${(g[m.key]||'none')===p.v?'selected':''}>${p.label}</option>`).join('')}</select>
+                    </td></tr>`).join('')}
+                  <tr><td>Cài đặt của mã định danh</td><td>
+                    <select data-grant-perm="${emailToKey(g.email)}" data-grant-module="settings">
+                      <option value="none" ${(g.settings||'none')==='none'?'selected':''}>Không được xem</option>
+                      <option value="view" ${(g.settings||'none')==='view'?'selected':''}>Được quyền xem</option>
+                      <option value="edit" ${(g.settings||'none')==='edit'?'selected':''}>Được quyền sửa</option>
+                    </select>
+                  </td></tr>
+                </tbody>
+              </table></div>
+            </div>`; }).join('') : '<div class="empty-state" style="padding:10px 0;">Chưa chia sẻ riêng cho tài khoản nào.</div>'}
+
+          <div class="divider-lbl">Thêm chia sẻ đích danh mới</div>
+          <div class="toolbar"><input id="grant-new-email" placeholder="email@gmail.com" style="min-width:240px;"></div>
+          <div class="table-wrap" style="margin-top:8px;"><table>
+            <thead><tr><th>Mục dữ liệu</th><th>Quyền</th></tr></thead>
+            <tbody>
+              ${SHARE_MODULES.map(m=>`
+                <tr><td>${m.label}</td><td><select data-new-grant-perm="${m.key}">${PERM_OPTIONS.map(p=>`<option value="${p.v}">${p.label}</option>`).join('')}</select></td></tr>`).join('')}
+              <tr><td>Cài đặt của mã định danh</td><td>
+                <select data-new-grant-perm="settings">
+                  <option value="none">Không được xem</option>
+                  <option value="view">Được quyền xem</option>
+                  <option value="edit">Được quyền sửa</option>
+                </select>
+              </td></tr>
+            </tbody>
+          </table></div>
+          <button class="btn btn-primary btn-sm" id="grant-add-btn" style="margin-top:10px;">+ Chia sẻ cho tài khoản này</button>
+        </div>
+      </div>` : ''}
+
+      ${isOwner() ? `
+      <div class="panel"><div class="panel-head"><h3>🔐 Bảo mật mã xã</h3></div>
+        <div class="panel-body">
+          <div class="kv-row"><span>Mật khẩu mã xã hiện tại</span><b>${cfg.accessCode? '•••••• (đã đặt)' : 'Chưa đặt (ai biết mã cũng nhập được)'}</b></div>
+          <div class="toolbar">
+            <input id="sec-pass" type="password" placeholder="Mật khẩu mới (để trống = bỏ mật khẩu)" style="min-width:240px;">
+            <button class="btn btn-primary btn-sm" id="sec-pass-save">Cập nhật mật khẩu</button>
+          </div>
+          <p class="sub" style="margin:6px 0 14px;">Đổi mật khẩu sẽ <b>văng toàn bộ Khách đã đăng nhập đang sài ké</b> ra ngoài; họ cần nhập đúng mật khẩu mới để tham gia lại.</p>
+        </div>
+      </div>` : ''}
+
+      ${isOwner() ? `
       <div class="panel"><div class="panel-head"><h3>🛡️ Bảo hiểm &amp; An toàn Dữ liệu</h3></div>
         <div class="panel-body">
           <p class="sub" style="margin:0 0 4px;">Sao lưu định kỳ để phòng trường hợp mất dữ liệu, đổi máy tính, hoặc xoá cache trình duyệt.</p>
@@ -1834,11 +2651,28 @@
           </div>
           <p class="sub" style="margin-top:10px;">Lưu ý: nhập dữ liệu từ file sao lưu sẽ <b>ghi đè toàn bộ</b> dữ liệu hiện tại (hộ vay, chi tiêu, cấu hình, nhật ký, thùng rác) về đúng trạng thái đã lưu trong file.</p>
         </div>
-      </div>`;
+      </div>` : ''}`;
 
-    document.getElementById('bk-export-btn').onclick = exportBackupJSON;
-    document.getElementById('bk-import-btn').onclick = ()=> document.getElementById('bk-import-file').click();
-    document.getElementById('bk-import-file').onchange = (e)=> importBackupJSON(e.target.files[0]);
+    if(state.identity.email) renderWardWalletPanel(document.getElementById('wallet-embed-mount'), {embedded:true});
+
+    {
+      const exportBtn = document.getElementById('bk-export-btn');
+      if(exportBtn) exportBtn.onclick = exportBackupJSON;
+      const importBtn = document.getElementById('bk-import-btn');
+      if(importBtn) importBtn.onclick = ()=> document.getElementById('bk-import-file').click();
+      const importFile = document.getElementById('bk-import-file');
+      if(importFile) importFile.onchange = (e)=> importBackupJSON(e.target.files[0]);
+      const passBtn = document.getElementById('sec-pass-save');
+      if(passBtn) passBtn.onclick = async ()=>{
+        const newPass = document.getElementById('sec-pass').value;
+        cfg.accessCode = newPass || '';
+        cfg.accessVersion = (cfg.accessVersion||0) + 1; // bump để văng toàn bộ Khách đang sài ké mã cũ
+        await cSet('config', cfg);
+        await pushLog('đổi mật khẩu mã xã', wardId());
+        alert('Đã cập nhật mật khẩu mã xã. Các Khách đã đăng nhập đang sài ké sẽ được yêu cầu nhập lại mật khẩu mới.');
+        renderSettingsTab(el);
+      };
+    }
 
     // ---- cập nhật động các nhãn khi đổi cấu hình danh xưng (chưa lưu) ----
     function currentSubLabelSt(){
@@ -1858,48 +2692,78 @@
     document.getElementById('st-subadmin').onchange = refreshAdminLabelsSt;
     document.getElementById('st-subadmin-custom').oninput = refreshAdminLabelsSt;
 
-    if(isOwner()){
-      document.getElementById('st-save').onclick = async ()=>{
-        const subAdminType = document.getElementById('st-subadmin').value;
-        const subAdminCustom = document.getElementById('st-subadmin-custom').value.trim();
-        if(subAdminType==='Khác' && !subAdminCustom){ alert('Vui lòng nhập tên gọi khác cho cấp cơ sở trực thuộc.'); return; }
-        cfg.wardName = document.getElementById('st-ward').value.trim();
-        cfg.adminLevel = document.getElementById('st-adminlevel').value;
-        cfg.subAdminType = subAdminType;
-        cfg.subAdminCustom = subAdminCustom;
-        cfg.retainPercent = parseFloat(document.getElementById('st-retain').value)||0;
-        cfg.hamlets = document.getElementById('st-hamlets').value.split(',').map(s=>s.trim()).filter(Boolean);
-        cfg.projects = document.getElementById('st-projects').value.split(',').map(s=>s.trim()).filter(Boolean);
-        ['q1','q2','q3','q4'].forEach(q=>{
-          cfg.quarters[q].start = document.getElementById(`st-${q}-start`).value;
-          cfg.quarters[q].end = document.getElementById(`st-${q}-end`).value;
-        });
-        await cSet('config', cfg);
-        await pushLog('cập nhật', 'cấu hình hệ thống');
-        renderSettingsTab(el);
-      };
-      const addBtn = document.getElementById('cb-add');
-      if(addBtn) addBtn.onclick = async ()=>{
-        const email = document.getElementById('cb-email').value.trim().toLowerCase();
-        const role = document.getElementById('cb-role').value;
-        if(!email) return;
-        const key = emailToKey(email);
-        state.collaborators[key] = {role, name:'', email};
-        await cSetRecord('collaborators', key, state.collaborators[key]);
-        await pushLog('chia sẻ quyền', `${role} cho ${email}`);
-        renderSettingsTab(el);
-      };
-      document.querySelectorAll('[data-rm]').forEach(btn=>{
-        btn.onclick = async ()=>{
-          const key = btn.dataset.rm;
-          const email = (state.collaborators[key]&&state.collaborators[key].email) || key;
-          delete state.collaborators[key];
-          await cRemoveRecord('collaborators', key);
-          await pushLog('thu hồi quyền', email);
-          renderSettingsTab(el);
-        };
+    const stSaveBtn = document.getElementById('st-save');
+    if(stSaveBtn) stSaveBtn.onclick = async ()=>{
+      const subAdminType = document.getElementById('st-subadmin').value;
+      const subAdminCustom = document.getElementById('st-subadmin-custom').value.trim();
+      const wardNameVal = document.getElementById('st-ward').value.trim();
+      const provinceNameVal = document.getElementById('st-provincename').value.trim();
+      if(!wardNameVal){ alert(`Vui lòng nhập Tên riêng (${document.getElementById('st-adminlevel').value}).`); return; }
+      if(!provinceNameVal){ alert('Vui lòng nhập Tên tỉnh/thành phố.'); return; }
+      if(subAdminType==='Khác' && !subAdminCustom){ alert('Vui lòng nhập tên gọi khác cho cấp cơ sở trực thuộc.'); return; }
+      cfg.wardName = wardNameVal;
+      cfg.adminLevel = document.getElementById('st-adminlevel').value;
+      cfg.provinceType = document.getElementById('st-provincetype').value;
+      cfg.provinceName = provinceNameVal;
+      cfg.subAdminType = subAdminType;
+      cfg.subAdminCustom = subAdminCustom;
+      cfg.retainPercent = parseFloat(document.getElementById('st-retain').value)||0;
+      cfg.hamlets = document.getElementById('st-hamlets').value.split(',').map(s=>s.trim()).filter(Boolean);
+      cfg.projects = document.getElementById('st-projects').value.split(',').map(s=>s.trim()).filter(Boolean);
+      ['q1','q2','q3','q4'].forEach(q=>{
+        cfg.quarters[q].start = document.getElementById(`st-${q}-start`).value;
+        cfg.quarters[q].end = document.getElementById(`st-${q}-end`).value;
       });
-    }
+      await cSet('config', cfg);
+      await pushLog('cập nhật', 'cấu hình hệ thống');
+      renderSettingsTab(el);
+    };
+
+    // ---- Loại 1: chia sẻ chung theo Mã định danh (công khai) ----
+    el.querySelectorAll('[data-public-perm]').forEach(sel=>{
+      sel.onchange = async ()=>{
+        cfg.publicPerms = cfg.publicPerms || {};
+        cfg.publicPerms[sel.dataset.publicPerm] = sel.value;
+        await cSet('config', cfg);
+        await pushLog('cập nhật chia sẻ công khai', `${sel.dataset.publicPerm}: ${sel.value}`);
+      };
+    });
+    // ---- Loại 2: chia sẻ đích danh theo email (đã có) ----
+    el.querySelectorAll('[data-grant-perm]').forEach(sel=>{
+      sel.onchange = async ()=>{
+        const key = sel.dataset.grantPerm, mod = sel.dataset.grantModule;
+        cfg.grants = cfg.grants || {};
+        if(!cfg.grants[key]) return;
+        cfg.grants[key][mod] = sel.value;
+        await cSet('config', cfg);
+        await pushLog('cập nhật chia sẻ đích danh', `${cfg.grants[key].email} — ${mod}: ${sel.value}`);
+      };
+    });
+    el.querySelectorAll('[data-grant-remove]').forEach(btn=>{
+      btn.onclick = async ()=>{
+        const key = btn.dataset.grantRemove;
+        const email = (cfg.grants && cfg.grants[key] && cfg.grants[key].email) || key;
+        if(!confirm(`Gỡ hoàn toàn quyền chia sẻ đích danh cho "${email}"?`)) return;
+        delete cfg.grants[key];
+        await cSet('config', cfg);
+        await pushLog('gỡ chia sẻ đích danh', email);
+        renderSettingsTab(el);
+      };
+    });
+    // ---- Loại 2: thêm chia sẻ đích danh mới ----
+    const grantAddBtn = document.getElementById('grant-add-btn');
+    if(grantAddBtn) grantAddBtn.onclick = async ()=>{
+      const email = document.getElementById('grant-new-email').value.trim().toLowerCase();
+      if(!email){ alert('Vui lòng nhập email tài khoản Google cần chia sẻ.'); return; }
+      const key = emailToKey(email);
+      const grant = {email};
+      el.querySelectorAll('[data-new-grant-perm]').forEach(sel=>{ grant[sel.dataset.newGrantPerm] = sel.value; });
+      cfg.grants = cfg.grants || {};
+      cfg.grants[key] = grant;
+      await cSet('config', cfg);
+      await pushLog('thêm chia sẻ đích danh', email);
+      renderSettingsTab(el);
+    };
   }
 
   // ---------- borrower modal ----------
@@ -1913,7 +2777,7 @@
     const isNew = !state.modal.payload;
     const b = state.modal.payload ? {...state.modal.payload} : emptyBorrower();
     const hamlets = state.config.hamlets||[]; const projects = state.config.projects||[];
-    const readonly = !canEdit();
+    const readonly = !canEditModule('data');
     const wrap = document.createElement('div');
     wrap.className = 'modal-bg';
     wrap.innerHTML = `
@@ -1965,9 +2829,9 @@
           `; })() : ''}
         </div>
         <div class="modal-foot">
-          ${(!isNew && canEdit()) ? `<button class="btn btn-danger" id="m-delete" style="margin-right:auto;">Xoá (chuyển vào thùng rác)</button>` : ''}
+          ${(!isNew && canEditModule('data')) ? `<button class="btn btn-danger" id="m-delete" style="margin-right:auto;">Xoá (chuyển vào thùng rác)</button>` : ''}
           <button class="btn btn-ghost" id="m-cancel">Đóng</button>
-          ${canEdit() ? `<button class="btn btn-primary" id="m-save">${isNew?'Thêm hộ vay':'Lưu thay đổi'}</button>` : ''}
+          ${canEditModule('data') ? `<button class="btn btn-primary" id="m-save">${isNew?'Thêm hộ vay':'Lưu thay đổi'}</button>` : ''}
         </div>
       </div>`;
     document.body.appendChild(wrap);
