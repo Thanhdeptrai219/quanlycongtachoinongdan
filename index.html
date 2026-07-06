@@ -53,6 +53,12 @@
   // tài khoản Google gần nhất khi máy có nhiều tài khoản Google khác nhau).
   const googleProvider = new firebase.auth.GoogleAuthProvider();
   googleProvider.setCustomParameters({ prompt: 'select_account' });
+  // GHI NHỚ ĐĂNG NHẬP VĨNH VIỄN trên thiết bị (Local Persistence) — mặc định Firebase Auth JS SDK
+  // đã dùng chế độ này, nhưng ta khai báo TƯỜNG MINH để chắc chắn tuyệt đối: chỉ cần đăng nhập
+  // đúng 1 lần, tắt hẳn trình duyệt hay khởi động lại máy vẫn giữ nguyên phiên đăng nhập (lưu ở
+  // IndexedDB/localStorage của trình duyệt) cho tới khi người dùng CHỦ ĐỘNG bấm "Đăng xuất".
+  const authPersistenceReady = auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+    .catch(e => console.error('Không thiết lập được Local Persistence cho Firebase Auth (sẽ dùng mặc định của trình duyệt):', e));
 </script>
 <style>
   :root{
@@ -396,10 +402,18 @@
   .ai-header{ padding:16px 24px; border-bottom:1px solid var(--line); font-weight:800; font-size:16px; color:var(--rice-dark); background:var(--white); }
   .ai-messages{ flex:1; overflow-y:auto; padding:20px 10%; display:flex; flex-direction:column; gap:14px; }
   @media (max-width:900px){ .ai-messages{ padding:16px 4%; } .ai-sidebar{ width:210px; } }
-  .ai-bubble{ max-width:78%; padding:12px 15px; border-radius:14px; font-size:14px; line-height:1.6; white-space:pre-wrap; }
+  .ai-bubble{
+    max-width:78%; padding:12px 16px; border-radius:14px;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size:16px; line-height:1.6; white-space:pre-wrap;
+  }
   .ai-bubble.user{ align-self:flex-end; background:var(--rice-dark); color:#fff; border-bottom-right-radius:4px; }
   .ai-bubble.assistant{ align-self:flex-start; background:var(--white); border:1px solid var(--line); border-bottom-left-radius:4px; }
   .ai-bubble.thinking{ opacity:.7; font-style:italic; }
+  .ai-bubble p, .ai-bubble li, .ai-bubble br{ font-size:inherit; line-height:inherit; }
+  .ai-bubble .ai-md-list{ margin:4px 0; padding-left:22px; font-size:inherit; line-height:inherit; }
+  .ai-bubble .ai-md-list li{ margin:3px 0; }
+  @media (max-width:768px){ .ai-bubble{ font-size:15px; padding:10px 14px; } }
 
   /* Bọc bong bóng + thanh icon hành động (sửa/copy/thêm vào ghi chú) */
   .ai-bubble-wrap{ display:flex; flex-direction:column; max-width:78%; }
@@ -502,6 +516,45 @@
     return String(s==null? '' : s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
   const daysBetween = (a,b) => Math.round((new Date(b)-new Date(a))/86400000);
+
+  // ---------------------------------------------------------------------
+  // Chuyển Markdown CƠ BẢN (từ trả lời của AI) sang HTML an toàn — thay cho việc hiển thị thô
+  // các dấu *, **, - ... Luôn escapeHtml TRƯỚC (chống XSS) rồi mới áp quy tắc Markdown lên trên
+  // phần đã được thoát ký tự, nên các thẻ HTML sinh ra là do chính hàm này tạo, không phải do
+  // nội dung gốc (AI/người dùng) chèn vào được.
+  // Hỗ trợ: **in đậm**, *in nghiêng*, gạch đầu dòng (dòng bắt đầu bằng "- " hoặc "* "), danh sách
+  // số thứ tự ("1. "), và xuống dòng thường (\n -> <br>).
+  // ---------------------------------------------------------------------
+  function renderMarkdownLite(raw){
+    if(!raw) return '';
+    const esc = escapeHtml(raw);
+    // In đậm/in nghiêng áp dụng trên từng dòng nhỏ (an toàn vì đã escape ký tự HTML từ trước)
+    function inlineMd(s){
+      return s
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*])\*(?!\*)([^*]+?)\*(?!\*)/g, '$1<em>$2</em>');
+    }
+    const lines = esc.split('\n');
+    let html = '';
+    let listMode = null; // null | 'ul' | 'ol'
+    const closeList = ()=>{ if(listMode){ html += listMode==='ul' ? '</ul>' : '</ol>'; listMode = null; } };
+    lines.forEach(line=>{
+      const bulletMatch = line.match(/^\s*[-*]\s+(.*)$/);
+      const numberMatch = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      if(bulletMatch){
+        if(listMode!=='ul'){ closeList(); html += '<ul class="ai-md-list">'; listMode = 'ul'; }
+        html += `<li>${inlineMd(bulletMatch[1])}</li>`;
+      } else if(numberMatch){
+        if(listMode!=='ol'){ closeList(); html += '<ol class="ai-md-list">'; listMode = 'ol'; }
+        html += `<li>${inlineMd(numberMatch[1])}</li>`;
+      } else {
+        closeList();
+        html += line.trim()==='' ? '<br>' : `${inlineMd(line)}<br>`;
+      }
+    });
+    closeList();
+    return html.replace(/(<br>)+$/,''); // bỏ (các) <br> thừa ở cuối cùng
+  }
 
   // =====================================================================
   // ---------- LỚP LƯU TRỮ ĐÁM MÂY (Firebase Realtime Database) ----------
@@ -1275,7 +1328,17 @@
     try{
       const snap = await rtdb.ref('system_config/ai_providers').get();
       state.aiProviders = (snap && snap.exists()) ? Object.entries(snap.val()).map(([id,v])=>({id, ...v})) : [];
-    }catch(e){ state.aiProviders = []; }
+    }catch(e){
+      // Lỗi hay gặp nhất ở đây là PERMISSION_DENIED do Realtime Database Rules đang yêu cầu
+      // auth != null cho path "system_config" — khách tham quan/chưa đăng nhập Google sẽ KHÔNG
+      // có phiên đăng nhập Firebase Auth nên bị chặn đọc, dù code phía client không hề kiểm tra
+      // điều kiện đăng nhập nào ở đây cả. Cần mở quyền đọc công khai cho đúng path này trong
+      // Realtime Database Rules (KHÔNG PHẢI Firestore Rules — 2 hệ thống luật khác nhau hoàn
+      // toàn, và app này dùng Realtime Database xuyên suốt), ví dụ:
+      //   "system_config": { ".read": true }
+      console.error('[AI] Không tải được Cấu hình AI (system_config/ai_providers) — rất có thể do Realtime Database Rules đang chặn đọc công khai:', e);
+      state.aiProviders = [];
+    }
   }
   async function saveAiProvider(id, data){
     if(!isAdmin()) return;
@@ -1654,6 +1717,9 @@
 
   async function boot(){
     state.view = 'boot'; render();
+    // Đảm bảo Local Persistence đã được thiết lập xong TRƯỚC KHI Firebase Auth khôi phục phiên
+    // đăng nhập cũ — tránh trường hợp hiếm gặp bị lệch thời điểm khiến phiên không được khôi phục.
+    await authPersistenceReady;
     // Lắng nghe trạng thái đăng nhập Google thật qua Firebase Auth.
     // Không còn cho phép gõ tay tên/email — email lấy trực tiếp từ tài khoản
     // Google đã xác thực, dùng để đối chiếu phân quyền Owner/Editor/Viewer/Khách.
@@ -2380,27 +2446,15 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
     // Chỉ có ĐÚNG 1 API Key Gemini (không có hãng nào khác để cứu nguy) và cả 2 tầng Gemini đều lỗi.
     return { text:'Xin lỗi, hệ thống AI hiện đang quá tải, chưa thể trả lời ngay lúc này. Bạn vui lòng thử lại sau ít phút nhé!' };
   }
-  async function sendAiMessage(text){
-    const hasText = !!(text && text.trim());
-    if(!hasText && !state.aiPendingAttachments.length) return;
-    if(state.aiSending) return;
-    let chat = state.aiChats.find(c=>c.id===state.aiActiveChatId);
-    if(!chat){ chat = { id:'c_'+uid(), title:'Đoạn chat mới', messages:[], updatedAt:new Date().toISOString() }; state.aiChats.unshift(chat); state.aiActiveChatId = chat.id; }
-    const attachmentsForApi = state.aiPendingAttachments.slice();
-    // Chỉ lưu TÊN + LOẠI tệp vào lịch sử (không lưu base64) để tránh phình dung lượng Firebase —
-    // nội dung thật chỉ dùng ngay cho lượt gọi AI này.
-    const attachmentsForHistory = attachmentsForApi.map(a=>({ name:a.name, mimeType:a.mimeType }));
-    chat.messages.push({ role:'user', text: (text||'').trim(), time:new Date().toISOString(), attachments: attachmentsForHistory });
-    if(chat.messages.length===1) chat.title = (text||'').trim().slice(0,40) || (attachmentsForHistory[0] && attachmentsForHistory[0].name) || 'Đoạn chat mới';
-    chat.updatedAt = new Date().toISOString();
-    state.aiPendingAttachments = [];
+  // Thực hiện 1 lượt gọi AI trả lời cho đúng trạng thái `chat.messages` HIỆN TẠI (không tự thêm
+  // tin nhắn người dùng nào) — dùng chung cho: gửi tin nhắn mới, gửi lại sau khi sửa, và "Tải lại"
+  // (yêu cầu AI trả lời lại cho đúng câu hỏi cũ).
+  async function runAssistantTurn(chat, attachmentsForApi){
     state.aiSending = true;
-    // Thêm sẵn 1 bong bóng trợ lý (rỗng, đang "suy nghĩ") để tuôn chữ trực tiếp vào ngay khi có,
-    // tạo cảm giác phản hồi tức thời thay vì phải chờ xong hết mới hiện "một cục".
     const assistantMsg = { role:'assistant', text:'', time:new Date().toISOString(), streaming:true };
     chat.messages.push(assistantMsg);
     renderAiChatOverlay();
-    const result = await callAIWithFallback(chat.messages.slice(0,-1), { attachments: attachmentsForApi, webSearch: state.aiWebSearchOn }, (partial)=>{
+    const result = await callAIWithFallback(chat.messages.slice(0,-1), { attachments: attachmentsForApi||[], webSearch: state.aiWebSearchOn }, (partial)=>{
       assistantMsg.text = partial;
       const bubbleEl = document.getElementById('ai-streaming-bubble');
       if(bubbleEl){
@@ -2421,6 +2475,27 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
     state.aiSending = false;
     renderAiChatOverlay();
     saveAiChatToCloud(chat);
+    // Yêu cầu 7: sau lượt trao đổi ĐẦU TIÊN của 1 đoạn chat mới, để AI tự đặt tên ngắn gọn cho
+    // đoạn chat đó (giống các mô hình AI hiện nay), thay vì chỉ lấy tạm mấy chữ đầu câu hỏi.
+    if(chat.messages.filter(m=>m.role==='user').length===1 && chat.messages.filter(m=>m.role==='assistant').length===1){
+      generateChatTitle(chat);
+    }
+  }
+  async function sendAiMessage(text){
+    const hasText = !!(text && text.trim());
+    if(!hasText && !state.aiPendingAttachments.length) return;
+    if(state.aiSending) return;
+    let chat = state.aiChats.find(c=>c.id===state.aiActiveChatId);
+    if(!chat){ chat = { id:'c_'+uid(), title:'Đoạn chat mới', messages:[], updatedAt:new Date().toISOString() }; state.aiChats.unshift(chat); state.aiActiveChatId = chat.id; }
+    const attachmentsForApi = state.aiPendingAttachments.slice();
+    // Chỉ lưu TÊN + LOẠI tệp vào lịch sử (không lưu base64) để tránh phình dung lượng Firebase —
+    // nội dung thật chỉ dùng ngay cho lượt gọi AI này.
+    const attachmentsForHistory = attachmentsForApi.map(a=>({ name:a.name, mimeType:a.mimeType }));
+    chat.messages.push({ role:'user', text: (text||'').trim(), time:new Date().toISOString(), attachments: attachmentsForHistory });
+    if(chat.messages.length===1) chat.title = (text||'').trim().slice(0,40) || (attachmentsForHistory[0] && attachmentsForHistory[0].name) || 'Đoạn chat mới';
+    chat.updatedAt = new Date().toISOString();
+    state.aiPendingAttachments = [];
+    await runAssistantTurn(chat, attachmentsForApi);
   }
 
   // ---------------------------------------------------------------------
@@ -2452,6 +2527,53 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
     }catch(e){ console.warn('Sao chép clipboard lỗi:', e); }
   }
   function copyMessageText(text){ writeClipboardSilent(text); showToast('Đã sao chép!'); }
+
+  // Xoá HẲN 1 tin nhắn bất kỳ (của người dùng hoặc AI) khỏi đoạn chat — không thể hoàn tác.
+  function deleteMessageAt(idx){
+    if(!confirm('Xoá tin nhắn này? Thao tác này KHÔNG THỂ hoàn tác, không thể khôi phục lại. Bạn có chắc chắn?')) return;
+    const chat = state.aiChats.find(c=>c.id===state.aiActiveChatId);
+    if(!chat || !chat.messages[idx]) return;
+    chat.messages.splice(idx, 1);
+    chat.updatedAt = new Date().toISOString();
+    renderAiChatOverlay();
+    saveAiChatToCloud(chat);
+  }
+  // "Tải lại" — chỉ có ở tin nhắn NGƯỜI DÙNG mới nhất: giữ nguyên câu hỏi, xoá bỏ phản hồi cũ của
+  // AI (và mọi thứ sau đó, dù thường không có gì sau tin mới nhất) rồi yêu cầu AI trả lời lại từ đầu.
+  async function regenerateReply(idx){
+    if(state.aiSending) return;
+    const chat = state.aiChats.find(c=>c.id===state.aiActiveChatId);
+    if(!chat || !chat.messages[idx]) return;
+    chat.messages = chat.messages.slice(0, idx+1);
+    await runAssistantTurn(chat, []);
+  }
+  // Đổi tên 1 đoạn chat theo ý người dùng (ghi đè tên do AI tự đặt, nếu có).
+  function renameAiChat(chatId){
+    const chat = state.aiChats.find(c=>c.id===chatId);
+    if(!chat) return;
+    const name = prompt('Đổi tên đoạn chat:', chat.title||'');
+    if(name===null || !name.trim()) return;
+    chat.title = name.trim().slice(0,60);
+    renderAiChatOverlay();
+    saveAiChatToCloud(chat);
+  }
+  // Yêu cầu 7: để AI tự đặt tên ngắn gọn cho đoạn chat dựa trên nội dung trao đổi đầu tiên — gọi
+  // riêng 1 lượt AI nhỏ, KHÔNG đưa vào lịch sử hiển thị, không ảnh hưởng luồng chat chính.
+  async function generateChatTitle(chat){
+    try{
+      const firstUser = chat.messages.find(m=>m.role==='user' && !m.streaming);
+      const firstAssistant = chat.messages.find(m=>m.role==='assistant' && !m.streaming);
+      if(!firstUser || !firstUser.text) return;
+      const askText = `Dựa vào đoạn hội thoại sau, hãy đặt 1 tiêu đề thật ngắn gọn (tối đa 6 từ, không quá 40 ký tự, không dùng dấu ngoặc kép, không chấm câu ở cuối, không giải thích gì thêm — CHỈ trả lời đúng tiêu đề) tóm tắt chủ đề chính của đoạn hội thoại:\nNgười dùng: ${firstUser.text.slice(0,300)}\n${firstAssistant && firstAssistant.text? 'Trợ lý: '+firstAssistant.text.slice(0,300) : ''}`;
+      const result = await callAIWithFallback([{ role:'user', text: askText }], {}, null);
+      const title = (result.text||'').replace(/["'“”‘’\n]/g,'').trim().replace(/[.。]$/,'').slice(0,60);
+      if(title){
+        chat.title = title;
+        if(state._aiChatOpen) renderAiChatOverlay();
+        saveAiChatToCloud(chat);
+      }
+    }catch(e){ console.warn('[AI] Tự đặt tên đoạn chat lỗi (giữ nguyên tên mặc định):', e); }
+  }
 
   // ---------------------------------------------------------------------
   // Sửa & Gửi lại tin nhắn NGƯỜI DÙNG — xoá mọi tin nhắn phía sau (kiểu Gemini) rồi hỏi lại AI.
@@ -2508,6 +2630,14 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
     }
     const chat = state.aiChats.find(c=>c.id===state.aiActiveChatId);
     const provider = getActiveAiProvider();
+    let lastUserIdx = -1;
+    if(chat) chat.messages.forEach((mm,i)=>{ if(mm.role==='user') lastUserIdx = i; });
+    // Yêu cầu 6: chỉ tự cuộn xuống đáy nếu người dùng ĐANG ở gần đáy trước khi render lại (đúng
+    // hành vi chat bình thường); nếu họ đã cuộn lên xem tin nhắn cũ (vd để bấm Sửa) thì GIỮ
+    // NGUYÊN đúng vị trí đang xem, không tự ý kéo họ xuống dưới cùng nữa.
+    const prevMsgBox = document.getElementById('ai-messages');
+    const wasNearBottom = prevMsgBox ? (prevMsgBox.scrollHeight - prevMsgBox.scrollTop - prevMsgBox.clientHeight < 80) : true;
+    const prevScrollTop = prevMsgBox ? prevMsgBox.scrollTop : 0;
     overlay.innerHTML = `
       <div class="ai-sidebar">
         <button class="ai-exit-btn" id="ai-exit-btn">✕ THOÁT</button>
@@ -2518,6 +2648,7 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
           ${state.aiChats.length? state.aiChats.map(c=>`
             <div class="ai-hist-item ${c.id===state.aiActiveChatId?'active':''}" data-ai-hist="${c.id}">
               <span class="ai-hist-title">${escapeHtml(c.title||'Đoạn chat mới')}</span>
+              <button class="ai-hist-del" data-ai-hist-rename="${c.id}" title="Đổi tên đoạn chat">✏️</button>
               <button class="ai-hist-del" data-ai-hist-del="${c.id}" title="Xoá đoạn chat">🗑️</button>
             </div>`).join('') : '<div class="sub" style="color:rgba(255,255,255,.6); padding:6px 10px;">Chưa có đoạn chat nào.</div>'}
         </div>
@@ -2544,10 +2675,13 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
                   </div>`;
                 }
                 const attachHtml = m.attachments && m.attachments.length? `<div class="ai-bubble-attach">${m.attachments.map(a=>`📎 ${escapeHtml(a.name)}`).join('&nbsp;&nbsp;')}</div>` : '';
+                const bodyHtml = m.role==='assistant' ? renderMarkdownLite(m.text) : escapeHtml(m.text);
+                const isLastUserMsg = m.role==='user' && idx===lastUserIdx;
                 return `<div class="ai-bubble-wrap ${m.role}">
-                  <div class="ai-bubble ${m.role}">${escapeHtml(m.text)}${attachHtml}</div>
+                  <div class="ai-bubble ${m.role}">${bodyHtml}${attachHtml}</div>
                   <div class="ai-bubble-actions">
                     ${m.role==='user'? `<button class="ai-bubble-act" data-bubble-edit="${idx}" title="Sửa">✏️</button>` : ''}
+                    ${isLastUserMsg? `<button class="ai-bubble-act" data-bubble-reload="${idx}" title="Tải lại — yêu cầu AI trả lời lại">🔄</button>` : ''}
                     <button class="ai-bubble-act" data-bubble-copy="${idx}" title="Sao chép">📋</button>
                     <div class="ai-bubble-addnote-wrap">
                       <button class="ai-bubble-act" data-bubble-addnote="${idx}" title="Thêm vào Siêu ghi chú">📌</button>
@@ -2556,6 +2690,7 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
                         <div class="ai-add-opt" data-addnote-space="personal" data-addnote-idx="${idx}">🔒 Thêm vào Bộ ghi chú cá nhân</div>
                       </div>` : ''}
                     </div>
+                    <button class="ai-bubble-act" data-bubble-delete="${idx}" title="Xoá tin nhắn này">🗑️</button>
                   </div>
                 </div>`;
               }).join('')}
@@ -2595,7 +2730,7 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
         </div>
       </div>`;
     const msgBox = document.getElementById('ai-messages');
-    if(msgBox) msgBox.scrollTop = msgBox.scrollHeight;
+    if(msgBox) msgBox.scrollTop = wasNearBottom ? msgBox.scrollHeight : prevScrollTop;
     document.getElementById('ai-exit-btn').onclick = closeAiChat;
     document.getElementById('ai-newchat-btn').onclick = newAiChat;
     const gotoNotesBtn = document.getElementById('ai-goto-notes-btn');
@@ -2610,10 +2745,16 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
     overlay.querySelectorAll('[data-ai-hist-del]').forEach(btn=>{
       btn.onclick = (e)=>{ e.stopPropagation(); deleteAiChatById(btn.dataset.aiHistDel); };
     });
+    overlay.querySelectorAll('[data-ai-hist-rename]').forEach(btn=>{
+      btn.onclick = (e)=>{ e.stopPropagation(); renameAiChat(btn.dataset.aiHistRename); };
+    });
 
-    // ---- Icon hành động trên bong bóng tin nhắn: Sửa / Copy / Thêm vào Siêu ghi chú ----
+    // ---- Icon hành động trên bong bóng tin nhắn: Sửa / Tải lại / Copy / Thêm vào Siêu ghi chú / Xoá ----
     overlay.querySelectorAll('[data-bubble-edit]').forEach(btn=>{
       btn.onclick = ()=> startEditMessage(parseInt(btn.dataset.bubbleEdit,10));
+    });
+    overlay.querySelectorAll('[data-bubble-reload]').forEach(btn=>{
+      btn.onclick = ()=> regenerateReply(parseInt(btn.dataset.bubbleReload,10));
     });
     overlay.querySelectorAll('[data-bubble-copy]').forEach(btn=>{
       btn.onclick = ()=>{
@@ -2621,6 +2762,9 @@ Luôn trả lời bằng tiếng Việt (trừ khi được yêu cầu khác), n
         const m = chat && chat.messages[idx];
         if(m) copyMessageText(m.text||'');
       };
+    });
+    overlay.querySelectorAll('[data-bubble-delete]').forEach(btn=>{
+      btn.onclick = ()=> deleteMessageAt(parseInt(btn.dataset.bubbleDelete,10));
     });
     overlay.querySelectorAll('[data-bubble-addnote]').forEach(btn=>{
       btn.onclick = (e)=>{ e.stopPropagation(); toggleAddNoteMenu(parseInt(btn.dataset.bubbleAddnote,10)); };
