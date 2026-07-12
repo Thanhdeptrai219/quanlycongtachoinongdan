@@ -544,6 +544,25 @@
   /* Toast thông báo nhanh */
   .hnd-toast{ position:fixed; left:50%; bottom:30px; transform:translate(-50%, 16px); background:var(--rice-dark); color:#fff; padding:10px 22px; border-radius:24px; font-size:13.5px; font-weight:700; box-shadow:var(--shadow); z-index:1000; opacity:0; transition:opacity .25s ease, transform .25s ease; pointer-events:none; max-width:80vw; text-align:center; }
   .hnd-toast.show{ opacity:1; transform:translate(-50%, 0); }
+  /* Thông báo LỚN (gia hạn thành công / phê duyệt đóng lãi thành công) — nhảy sổ ra giữa màn hình,
+     "nhảy múa" (phóng to/xoay nhẹ) trong 1 giây, đứng im 4 giây, rồi mờ dần và biến mất. */
+  @keyframes bigToastPopDance{
+    0%{ transform:translate(-50%,-50%) scale(0) rotate(0deg); opacity:0; }
+    15%{ transform:translate(-50%,-50%) scale(1.18) rotate(-8deg); opacity:1; }
+    30%{ transform:translate(-50%,-50%) scale(0.94) rotate(6deg); }
+    45%{ transform:translate(-50%,-50%) scale(1.08) rotate(-4deg); }
+    60%{ transform:translate(-50%,-50%) scale(0.98) rotate(3deg); }
+    75%{ transform:translate(-50%,-50%) scale(1.03) rotate(-2deg); }
+    100%{ transform:translate(-50%,-50%) scale(1) rotate(0deg); opacity:1; }
+  }
+  @keyframes bigToastFadeOut{ 0%{ opacity:1; } 100%{ opacity:0; } }
+  .big-toast{
+    position:fixed; top:44%; left:50%; z-index:99999; background:#1b7a3d; color:#fff; font-weight:800;
+    font-size:16px; padding:20px 32px; border-radius:16px; box-shadow:0 10px 40px rgba(0,0,0,.4);
+    text-align:center; max-width:90vw; animation: bigToastPopDance 1s ease-out forwards;
+  }
+  .big-toast.big-toast-fading{ animation: bigToastFadeOut 1s ease-in forwards; }
+
 
   /* Hiệu ứng chữ "CHÚC ĐỒNG CHÍ..." nổi lềnh bềnh nhẹ nhàng như trên mặt nước, ở các popup chào mừng */
   @keyframes welcomeFloat{
@@ -2176,6 +2195,13 @@
   function hiddenColumnSystemsDocs(){
     const systems = [
       {
+        title: 'Cấu trúc dữ liệu nền tảng (không phải cột, nhưng là gốc rễ của toàn bộ hệ thống cột ẩn bên dưới)',
+        columns: [
+          { name:'Các Hộp chứa Quý (borrowerQuarterBoxes)', desc:'Mỗi người vay có 1 chuỗi "hộp chứa Quý" — mỗi hộp là 1 Quý (hoặc 1 mảnh Quý bị cắt bởi ranh giới vay gốc/gia hạn) mà người vay có nghĩa vụ đóng lãi, gồm: tên hộp (vd "Quý 3#* -2026"), ngày bắt đầu/kết thúc, tổng số ngày, lãi suất áp dụng, số tiền lãi của riêng hộp đó. Tính lại HOÀN TOÀN mỗi lần gọi (không lưu trữ cứng) dựa trên Ngày vay + Ngày đến hạn + toàn bộ lịch sử gia hạn + mốc 4 Quý hiện hành — nên luôn tự động đúng theo mọi thay đổi. Là nền tảng của "Tất cả quý của món vay", "Quý chưa/đã đóng lãi", và mọi công thức số ngày/số tiền ở các hệ thống cột ẩn bên dưới.' },
+          { name:'Hộp tiền đã đóng lãi (interestPaymentBoxes)', desc:'Mỗi người vay có đúng 1 hộp, sinh ra ngay khi thêm vào danh sách (mặc định 0đ). Lưu tại secretdata/interestPaymentBoxes/{borrowerId} = { totalPaid: tổng tất cả tiền đã "Xác nhận đóng lãi thành công", payments: {boxKey: số tiền đã gán cụ thể cho từng hộp chứa Quý} }. "Số tiền còn thừa lại" = totalPaid trừ tổng các khoản đã gán. Có cơ chế tự động dàn xếp số dư vào Quý nào đủ khả năng trả (ưu tiên Quý cũ nhất, ưu tiên nhóm "quá khứ+hiện tại" trước, chỉ xét tới nhóm "tương lai" khi nhóm kia đã hết). Là nguồn dữ liệu cho nút "Xem" (Lịch sử đóng lãi) và 2 cột công khai "Quý chưa/đã đóng lãi".' },
+        ],
+      },
+      {
         title: 'Cột ẩn độc lập (không thuộc bộ nào)',
         columns: [
           { name:'Phương án vay', desc:'Tên phương án vay của người này — logic y hệt cột "Phương án vay" công khai cũ trước đây, chỉ khác là không còn hiện trong khung "Tuỳ chỉnh cột" nữa.' },
@@ -2424,26 +2450,41 @@
     return { totalPaid, payments, paidEntries, paidSum, leftover, allBoxes };
   }
   // "Dàn xếp" số tiền thừa: nếu số dư (leftover) đủ trả trọn 1 hay nhiều "hộp chứa Quý" đang CHƯA có
-  // khoản trả riêng, thì tự động gán trọn số tiền quý đó vào payments (ưu tiên quý nào ĐỦ KHẢ NĂNG
-  // trả được, không nhất thiết theo thứ tự cũ/mới). Chạy khi vừa xác nhận thêm 1 khoản đóng lãi mới.
+  // khoản trả riêng, thì tự động gán trọn số tiền quý đó vào payments — ƯU TIÊN các Quý "từ QUÁ KHỨ
+  // tới HIỆN TẠI" trước (quý cũ nhất trước), CHỈ khi không còn Quý nào thuộc nhóm đó nữa thì mới xét
+  // tới các Quý "trong TƯƠNG LAI" (cũng ưu tiên tương lai gần nhất trước). Chạy khi vừa xác nhận
+  // thêm 1 khoản đóng lãi mới.
   async function settleInterestPaymentLeftover(b){
     const st = computeInterestPaymentBoxState(b);
     let leftover = st.leftover;
     if(leftover<=0) return;
     const payments = Object.assign({}, st.payments);
     const today = new Date(); today.setHours(0,0,0,0);
-    const candidates = st.allBoxes.filter(bx=>{
+    const pastCurrent = st.allBoxes.filter(bx=>{
       const f = new Date(bx.from+'T00:00:00');
-      return !isNaN(f.getTime()) && f<=today && !payments[bx.key] && bx.interestAmount>0;
+      return !isNaN(f.getTime()) && f<=today && bx.interestAmount>0;
+    });
+    const future = st.allBoxes.filter(bx=>{
+      const f = new Date(bx.from+'T00:00:00');
+      return !isNaN(f.getTime()) && f>today && bx.interestAmount>0;
     });
     let changed = false;
-    for(const bx of candidates){
+    for(const bx of pastCurrent){
+      if(payments[bx.key]) continue;
       if(leftover >= bx.interestAmount){ payments[bx.key] = bx.interestAmount; leftover = Math.round((leftover-bx.interestAmount)*100)/100; changed = true; }
+    }
+    const stillHasPastCurrentUnpaid = pastCurrent.some(bx=> !payments[bx.key]);
+    if(!stillHasPastCurrentUnpaid){
+      for(const bx of future){
+        if(payments[bx.key]) continue;
+        if(leftover >= bx.interestAmount){ payments[bx.key] = bx.interestAmount; leftover = Math.round((leftover-bx.interestAmount)*100)/100; changed = true; }
+      }
     }
     if(changed) await cSet('interestPaymentBoxes/'+b.id, { totalPaid: st.totalPaid, payments });
   }
   // Toàn bộ thông tin hiển thị của Hộp tiền (đúng cấu trúc bạn mô tả) — quý đã đóng (mới->cũ), tổng,
-  // số dư thừa, quý chưa đóng (cũ->mới, chỉ quá khứ+hiện tại), tổng chưa đóng.
+  // số dư thừa, quý chưa đóng TỪ QUÁ KHỨ TỚI HIỆN TẠI (cũ->mới), quý chưa đóng TRONG TƯƠNG LAI
+  // (gần->xa), tổng từng loại.
   function computeInterestPaymentBoxDisplay(b){
     const st = computeInterestPaymentBoxState(b);
     const allBoxes = st.allBoxes;
@@ -2458,7 +2499,13 @@
     }); // đã theo đúng thứ tự cũ->mới (allBoxes vốn đã là chuỗi thời gian)
     const unpaidLines = unpaidBoxes.map(bx=> ({ name: formatTimelineQuarterLabel(bx), amount: bx.interestAmount, box:bx }));
     const unpaidTotal = unpaidLines.reduce((s,x)=>s+x.amount, 0);
-    return { totalPaid: st.totalPaid, paidLines, paidTotal: st.paidSum, leftover: st.leftover, unpaidLines, unpaidTotal, allBoxes, paidKeys };
+    const futureUnpaidBoxes = allBoxes.filter(bx=>{
+      const f = new Date(bx.from+'T00:00:00');
+      return !isNaN(f.getTime()) && f>today && !paidKeys.has(bx.key);
+    }); // gần->xa (allBoxes vốn đã là chuỗi thời gian)
+    const futureUnpaidLines = futureUnpaidBoxes.map(bx=> ({ name: formatTimelineQuarterLabel(bx), amount: bx.interestAmount, box:bx }));
+    const futureUnpaidTotal = futureUnpaidLines.reduce((s,x)=>s+x.amount, 0);
+    return { totalPaid: st.totalPaid, paidLines, paidTotal: st.paidSum, leftover: st.leftover, unpaidLines, unpaidTotal, futureUnpaidLines, futureUnpaidTotal, allBoxes, paidKeys };
   }
   // Trả về { unpaidText, paidText } cho cột công khai "Quý chưa/đã đóng lãi" — nguồn dữ liệu giờ là
   // Hộp tiền đã đóng lãi (không còn dùng checkbox phê duyệt cũ nữa).
@@ -4218,6 +4265,18 @@ ${fileGenerationTrainingText()}`;
     document.body.appendChild(toast);
     requestAnimationFrame(()=> toast.classList.add('show'));
     setTimeout(()=>{ toast.classList.remove('show'); setTimeout(()=>{ if(toast.parentNode) toast.remove(); }, 300); }, 1800);
+  }
+  // Thông báo LỚN dùng cho các sự kiện quan trọng (gia hạn thành công, phê duyệt đóng lãi thành
+  // công) — nhảy sổ ra giữa màn hình + nhảy múa 1 giây, đứng im 4 giây, rồi mờ dần và biến mất.
+  function showBigToast(msg){
+    const el = document.createElement('div');
+    el.className = 'big-toast';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(()=>{
+      el.classList.add('big-toast-fading');
+      setTimeout(()=>{ if(el.parentNode) el.remove(); }, 1000);
+    }, 1000 + 4000);
   }
   function writeClipboardSilent(text){
     if(navigator.clipboard && navigator.clipboard.writeText){
@@ -6453,8 +6512,8 @@ ${fileGenerationTrainingText()}`;
           await cSet('loanExtensions/'+b.id, arr);
         }
         await pushLog('phê duyệt', `gia hạn nợ gốc LẦN ${extLevel} cho ${isGroup? targets.length+' hộ vay' : targets[0].name}`);
-        showToast('Đã lưu phê duyệt gia hạn!');
         close();
+        showBigToast(`Đã gia hạn thành công lần ${extLevel}`);
       };
     }
     renderBody();
@@ -6516,21 +6575,21 @@ ${fileGenerationTrainingText()}`;
       const allSame = extCounts.length>0 && extCounts.every(c=>c===extCounts[0]);
       const commonLevel = allSame ? extCounts[0] : null;
       const groupMaxedOut = allSame && commonLevel>=MAX_LOAN_EXTENSIONS;
-      const totalXemLabel = (allSame && commonLevel>0) ? `Xem (gH ${commonLevel} lần)` : 'Xem';
+      const totalXemLabel = allSame ? (commonLevel>0? `Xem (gH ${commonLevel} lần)` : 'Xem (0)') : 'Xem';
       return `
       <div style="margin-bottom:18px;">
         <div class="sv-group-header">📋 ${projName} (${groupList.length} người vay)${capitalTxt}${durationTxt}</div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Quyết định</th><th>Lịch sử gia hạn</th><th>Họ và tên</th><th>Số tiền gốc</th><th>Ngày đến hạn</th><th>Ngày gia hạn gần nhất</th></tr></thead>
+            <thead><tr><th>Lịch sử gia hạn</th><th>Quyết định</th><th>Họ và tên</th><th>Số tiền gốc</th><th>Ngày đến hạn</th><th>Ngày gia hạn gần nhất</th></tr></thead>
             <tbody>${groupList.map(b=>{
               const exts = getBorrowerExtensions(b.id);
-              const xemLabel = exts.length ? `Xem (gH ${exts.length} lần)` : 'Xem';
+              const xemLabel = exts.length ? `Xem (gH ${exts.length} lần)` : 'Xem (0)';
               const rowColor = daysRemainingRowColor(b.dueDate);
               const maxedOut = exts.length>=MAX_LOAN_EXTENSIONS;
               return `<tr${rowColor? ` style="background:${rowColor};"` : ''}>
-                <td>${maxedOut? `<button class="ext-action-btn" disabled title="Đã đạt tối đa 5 lần gia hạn">GIA HẠN</button>` : `<button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-single="${b.id}">GIA HẠN</button>`}</td>
                 <td><button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-history="${b.id}">${xemLabel}</button></td>
+                <td>${maxedOut? `<button class="ext-action-btn" disabled title="Đã đạt tối đa 5 lần gia hạn">GIA HẠN</button>` : `<button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-single="${b.id}">GIA HẠN</button>`}</td>
                 <td>${escapeHtml(b.name)}</td>
                 <td class="money">${moneySpaced(b.principal)}</td>
                 <td>${fmtDate(b.dueDate)}</td>
@@ -6538,8 +6597,8 @@ ${fileGenerationTrainingText()}`;
               </tr>`;
             }).join('')}
             <tr style="background:var(--paper-2); font-weight:700;">
-              <td>${(allSame && !groupMaxedOut)? `<button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-group="${gid}">GIA HẠN</button>` : `<button class="ext-action-btn" disabled title="${groupMaxedOut? 'Tất cả người vay trong nhóm đã đạt tối đa 5 lần gia hạn' : 'Chỉ dùng được khi tất cả người vay trong nhóm có cùng số lần gia hạn'}">GIA HẠN</button>`}</td>
               <td>${allSame? `<button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-group-history="${gid}">${totalXemLabel}</button>` : `<button class="ext-action-btn" disabled>Xem</button>`}</td>
+              <td>${(allSame && !groupMaxedOut)? `<button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-group="${gid}">GIA HẠN</button>` : `<button class="ext-action-btn" disabled title="${groupMaxedOut? 'Tất cả người vay trong nhóm đã đạt tối đa 5 lần gia hạn' : 'Chỉ dùng được khi tất cả người vay trong nhóm có cùng số lần gia hạn'}">GIA HẠN</button>`}</td>
               <td>TỔNG</td>
               <td class="money">${moneySpaced(groupList.reduce((s,b)=>s+(parseFloat(b.principal)||0),0))}</td>
               <td></td>
@@ -6685,9 +6744,12 @@ ${fileGenerationTrainingText()}`;
         ${disp.paidLines.length? disp.paidLines.map(x=>`<div class="kv-row"><span>${escapeHtml(x.name)}</span><b>${moneySpaced(x.amount)}</b></div>`).join('') : `<p class="sub">Chưa có quý nào đóng xong.</p>`}
         <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng ${disp.paidLines.length} quý là</span><b>${moneySpaced(disp.paidTotal)}</b></div>
         <div class="kv-row" style="margin-top:10px;"><span>Số tiền còn thừa lại chưa thuộc về quý nào</span><b>${moneySpaced(disp.leftover)}</b></div>
-        <div class="divider-lbl">Thông tin các quý chưa đóng lãi</div>
-        ${disp.unpaidLines.length? disp.unpaidLines.map(x=>`<div class="kv-row"><span>${escapeHtml(x.name)}</span><b>${moneySpaced(x.amount)}</b></div>`).join('') : `<p class="sub">Không còn quý nào chưa đóng lãi.</p>`}
-        <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng số tiền chưa đóng lãi</span><b>${moneySpaced(disp.unpaidTotal)}</b></div>`;
+        <div class="divider-lbl">Thông tin các quý chưa đóng lãi (từ quá khứ tới Hiện tại)</div>
+        ${disp.unpaidLines.length? disp.unpaidLines.map(x=>`<div class="kv-row"><span>${escapeHtml(x.name)}</span><b>${moneySpaced(x.amount)}</b></div>`).join('') : `<p class="sub">Không còn quý nào chưa đóng lãi từ quá khứ tới hiện tại.</p>`}
+        <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng số tiền chưa đóng lãi</span><b>${moneySpaced(disp.unpaidTotal)}</b></div>
+        <div class="divider-lbl">Thông tin các quý chưa đóng lãi (trong Tương lai)</div>
+        ${disp.futureUnpaidLines.length? disp.futureUnpaidLines.map(x=>`<div class="kv-row"><span>${escapeHtml(x.name)}</span><b>${moneySpaced(x.amount)}</b></div>`).join('') : `<p class="sub">Không có quý nào chưa đóng lãi trong tương lai.</p>`}
+        <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng số tiền chưa đóng lãi (tương lai)</span><b>${moneySpaced(disp.futureUnpaidTotal)}</b></div>`;
     wrap.innerHTML = `
       <div class="modal" style="max-width:96vw; width:640px;">
         <div class="modal-head"><h3>THÔNG TIN LỊCH SỬ ĐÓNG TIỀN LÃI CỦA HỘ VAY ${escapeHtml(b.name).toUpperCase()}</h3><button class="modal-close" id="iahist-close">✕</button></div>
@@ -6737,45 +6799,72 @@ ${fileGenerationTrainingText()}`;
     let mode = 'select';
     const selectedKeys = new Set();
     let receiptSurplus = 0, receiptShortfall = 0;
+    let autoLockedKey = null; // key của Quý (quá khứ+hiện tại) DUY NHẤT, tự chọn sẵn và không cho bỏ
 
     function renderBody(){
       if(mode==='select'){
         const disp = computeInterestPaymentBoxDisplay(b);
         const pastList = disp.unpaidLines; // đã cũ->mới
-        const futureList = disp.allBoxes.filter(bx=> !disp.paidKeys.has(bx.key) && !pastList.some(u=>u.box===bx))
-          .map(bx=> ({ name: formatTimelineQuarterLabel(bx), amount: bx.interestAmount, box:bx }));
-        const renderQuarterGroup = (list, groupId)=>{
-          if(!list.length) return '';
-          const allSel = list.every(x=> selectedKeys.has(x.box.key));
-          return `
-            <div style="margin-top:6px;">
-              ${list.map(x=>{
-                const sel = selectedKeys.has(x.box.key);
-                return `<span class="qbox-wrap">
-                  <button class="qbox-btn qbox-pulsing preview-allow ${sel?'qbox-selected':''}" data-qkey="${x.box.key}" data-group="${groupId}">${escapeHtml(x.name)}</button>
-                  <button class="qbox-info-btn qbox-pulsing preview-allow" data-qinfo="${x.box.key}">i</button>
-                </span>`;
-              }).join('')}
-              <button class="qbox-selectall-btn preview-allow" data-selall="${groupId}">${allSel? 'Bỏ chọn tất cả' : 'Chọn tất cả'}</button>
-            </div>`;
+        const futureList = disp.futureUnpaidLines; // đã gần->xa
+        // Nếu chỉ có đúng 1 Quý quá khứ+hiện tại -> tự động chọn sẵn, khoá không cho bỏ chọn.
+        if(pastList.length===1){ autoLockedKey = pastList[0].box.key; selectedKeys.add(autoLockedKey); }
+        else autoLockedKey = null;
+        const pastSelectedCount = pastList.filter(x=>selectedKeys.has(x.box.key)).length;
+        const futureUnlocked = pastList.length===0 || pastSelectedCount>0;
+        const canSelectFuture = (idx)=> idx===0 || selectedKeys.has(futureList[idx-1].box.key);
+
+        const renderPastGroup = ()=>{
+          if(!pastList.length) return `<p class="sub">Không có Quý nào chưa đóng lãi từ quá khứ tới hiện tại.</p>`;
+          const allSel = pastList.every(x=> selectedKeys.has(x.box.key));
+          const showSelectAll = pastList.length>1;
+          return `<div style="margin-top:6px;">
+            ${pastList.map(x=>{
+              const sel = selectedKeys.has(x.box.key);
+              const locked = x.box.key===autoLockedKey;
+              return `<span class="qbox-wrap">
+                <button class="qbox-btn qbox-pulsing preview-allow ${sel?'qbox-selected':''}" data-qkey="${x.box.key}" data-group="past" ${locked?'disabled title="Quý duy nhất — luôn được chọn"':''}>${escapeHtml(x.name)}</button>
+                <button class="qbox-info-btn qbox-pulsing preview-allow" data-qinfo="${x.box.key}">i</button>
+              </span>`;
+            }).join('')}
+            ${showSelectAll? `<button class="qbox-selectall-btn preview-allow" data-selall="past">${allSel? 'Bỏ chọn tất cả' : 'Chọn tất cả'}</button>` : ''}
+          </div>`;
         };
-        const selectedList = [...selectedKeys];
-        const canProceed = selectedList.length>0;
+        const renderFutureGroup = ()=>{
+          if(!futureList.length) return `<p class="sub">Không có Quý nào chưa đóng lãi trong TƯƠNG LAI.</p>`;
+          const allSel = futureList.every(x=> selectedKeys.has(x.box.key));
+          return `<div style="margin-top:6px;">
+            ${futureList.map((x,idx)=>{
+              const sel = selectedKeys.has(x.box.key);
+              const locked = !futureUnlocked;
+              return `<span class="qbox-wrap">
+                <button class="qbox-btn qbox-pulsing preview-allow ${sel?'qbox-selected':''} ${locked?'qbox-locked':''}" data-qkey="${x.box.key}" data-group="future" data-fidx="${idx}" ${locked?'style="opacity:.45;"':''}>${escapeHtml(x.name)}</button>
+                <button class="qbox-info-btn qbox-pulsing preview-allow" data-qinfo="${x.box.key}">i</button>
+              </span>`;
+            }).join('')}
+            <button class="qbox-selectall-btn preview-allow" data-selall="future" ${futureUnlocked?'':'disabled style="opacity:.45;"'}>${allSel? 'Bỏ chọn tất cả' : 'Chọn tất cả'}</button>
+          </div>`;
+        };
+        const selectedCount = selectedKeys.size;
+        const selectedSum = pastList.concat(futureList).filter(x=>selectedKeys.has(x.box.key)).reduce((s,x)=>s+x.amount,0);
+        const canProceed = selectedCount>0;
         wrap.innerHTML = `
           <div class="modal" style="max-width:96vw; width:900px;">
             <div class="modal-head"><h3>Phê duyệt đóng tiền lãi cho hộ vay ${escapeHtml(b.name)}</h3><button class="modal-close preview-allow" id="iapay-close">✕</button></div>
             <div class="modal-body">
               <div class="divider-lbl" style="margin-top:0;">Các Quý chưa đóng lãi từ QUÁ KHỨ tới HIỆN TẠI:</div>
-              ${pastList.length? renderQuarterGroup(pastList,'past') : `<p class="sub">Không có Quý nào chưa đóng lãi từ quá khứ tới hiện tại.</p>`}
+              ${renderPastGroup()}
               <div class="divider-lbl">Các Quý chưa đóng lãi trong TƯƠNG LAI:</div>
-              ${futureList.length? renderQuarterGroup(futureList,'future') : `<p class="sub">Không có Quý nào chưa đóng lãi trong TƯƠNG LAI.</p>`}
+              ${renderFutureGroup()}
             </div>
-            <div class="modal-foot">
-              <button class="btn btn-ghost preview-allow" id="iapay-cancel">Đóng bảng</button>
-              <button class="btn btn-primary preview-allow" id="iapay-start" ${canProceed?'':'disabled'}>Bắt đầu tính tiền lãi và đóng lãi</button>
+            <div class="modal-foot" style="justify-content:space-between;">
+              <span class="sub" style="font-weight:700; color:var(--rice-dark);">${selectedCount? `Tổng ${groupDigitsRight(String(selectedSum),3)} đồng (trong ${selectedCount}-quý được chọn)` : ''}</span>
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-ghost preview-allow" id="iapay-cancel">Đóng bảng</button>
+                <button class="btn btn-primary preview-allow" id="iapay-start" ${canProceed?'':'disabled'}>Bắt đầu tính tiền lãi và đóng lãi</button>
+              </div>
             </div>
           </div>`;
-        wireSelect(pastList.concat(futureList));
+        wireSelect(pastList, futureList, futureUnlocked, canSelectFuture);
         // Hiệu ứng nhấp nháy phóng to 1.1x liên tục trong 3 giây rồi tự dừng hẳn.
         setTimeout(()=>{ wrap.querySelectorAll('.qbox-pulsing').forEach(el=>el.classList.remove('qbox-pulsing')); }, 3000);
       } else {
@@ -6804,14 +6893,33 @@ ${fileGenerationTrainingText()}`;
       }
     }
 
-    function wireSelect(fullList){
+    function wireSelect(pastList, futureList, futureUnlocked, canSelectFuture){
       wrap.querySelector('#iapay-close').onclick = close;
       wrap.querySelector('#iapay-cancel').onclick = close;
       wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
+      const fullList = pastList.concat(futureList);
       wrap.querySelectorAll('[data-qkey]').forEach(btn=>{
+        if(btn.disabled) return;
         btn.onclick = ()=>{
           const k = btn.dataset.qkey;
-          if(selectedKeys.has(k)) selectedKeys.delete(k); else selectedKeys.add(k);
+          const grp = btn.dataset.group;
+          if(grp==='future'){
+            if(!futureUnlocked){ alert('Phải chọn ít nhất 1 Quý ở phần "QUÁ KHỨ tới HIỆN TẠI" trước khi chọn Quý tương lai (trừ khi không còn Quý nào ở phần đó).'); return; }
+            const idx = parseInt(btn.dataset.fidx,10);
+            const alreadySel = selectedKeys.has(k);
+            if(!alreadySel){
+              if(!canSelectFuture(idx)){ alert('Chỉ được chọn Quý tương lai theo đúng thứ tự — vui lòng chọn Quý tương lai GẦN NHẤT trước.'); return; }
+              selectedKeys.add(k);
+            } else {
+              // Chỉ cho bỏ chọn nếu không còn Quý tương lai XA HƠN đang được chọn
+              for(let j=idx+1;j<futureList.length;j++){
+                if(selectedKeys.has(futureList[j].box.key)){ alert('Phải bỏ chọn các Quý tương lai XA HƠN trước.'); return; }
+              }
+              selectedKeys.delete(k);
+            }
+          } else {
+            if(selectedKeys.has(k)) selectedKeys.delete(k); else selectedKeys.add(k);
+          }
           renderBody();
         };
       });
@@ -6822,15 +6930,19 @@ ${fileGenerationTrainingText()}`;
           if(bx) renderQuarterBoxInfoModal(b, bx.box);
         };
       });
-      wrap.querySelectorAll('[data-selall]').forEach(btn=>{
-        btn.onclick = ()=>{
-          const grp = btn.dataset.selall;
-          const groupList = fullList.filter(x=> wrap.querySelector(`[data-qkey="${x.box.key}"][data-group="${grp}"]`));
-          const allSel = groupList.every(x=> selectedKeys.has(x.box.key));
-          groupList.forEach(x=>{ if(allSel) selectedKeys.delete(x.box.key); else selectedKeys.add(x.box.key); });
-          renderBody();
-        };
-      });
+      const pastSelAllBtn = wrap.querySelector('[data-selall="past"]');
+      if(pastSelAllBtn) pastSelAllBtn.onclick = ()=>{
+        const allSel = pastList.every(x=> selectedKeys.has(x.box.key));
+        pastList.forEach(x=>{ if(x.box.key===autoLockedKey) return; if(allSel) selectedKeys.delete(x.box.key); else selectedKeys.add(x.box.key); });
+        renderBody();
+      };
+      const futureSelAllBtn = wrap.querySelector('[data-selall="future"]');
+      if(futureSelAllBtn && !futureSelAllBtn.disabled) futureSelAllBtn.onclick = ()=>{
+        const allSel = futureList.every(x=> selectedKeys.has(x.box.key));
+        if(allSel) futureList.forEach(x=> selectedKeys.delete(x.box.key));
+        else futureList.forEach(x=> selectedKeys.add(x.box.key)); // chọn tất cả luôn hợp lệ về thứ tự vì chọn liên tục từ đầu
+        renderBody();
+      };
       const startBtn = wrap.querySelector('#iapay-start');
       if(startBtn) startBtn.onclick = ()=>{ if(!selectedKeys.size) return; mode='receipt'; renderBody(); };
     }
@@ -6845,6 +6957,11 @@ ${fileGenerationTrainingText()}`;
         const el = wrap.querySelector('#rcpt-grandtotal');
         if(el) el.textContent = moneySpaced(chosenSum + receiptSurplus - receiptShortfall);
       };
+      // Bấm vào ô mà đang là "0" thì xoá trắng để gõ luôn, không cần tự xoá tay.
+      surplusInput.addEventListener('focus', ()=>{ if(surplusInput.value==='0') surplusInput.value=''; });
+      shortfallInput.addEventListener('focus', ()=>{ if(shortfallInput.value==='0') shortfallInput.value=''; });
+      surplusInput.addEventListener('blur', ()=>{ if(surplusInput.value.trim()==='') surplusInput.value='0'; });
+      shortfallInput.addEventListener('blur', ()=>{ if(shortfallInput.value.trim()==='' || shortfallInput.value.trim()==='-') shortfallInput.value='0'; });
       // Lưu ý: KHÔNG được gọi renderBody() ngay trong sự kiện "input" — vì render lại toàn bộ modal
       // sẽ tạo ra 1 <input> MỚI hoàn toàn, làm mất focus/con trỏ đang gõ dở (đây chính là lỗi trước
       // đó khiến người dùng không gõ được số). Chỉ cập nhật đúng dòng "Tổng tất cả" trực tiếp.
@@ -6881,8 +6998,8 @@ ${fileGenerationTrainingText()}`;
         state.interestPaymentBoxes[b.id] = { totalPaid:newTotalPaid, payments };
         await settleInterestPaymentLeftover(b);
         await pushLog('xác nhận', `đóng lãi cho hộ vay ${b.name} (${moneySpaced(grandTotal)})`);
-        showToast('Đã xác nhận đóng lãi thành công!');
         close();
+        showBigToast(`Phê duyệt thành công: hộ vay ${b.name} đóng xong tiền lãi là ${groupDigitsRight(String(Math.round(grandTotal)),3)}đ`);
       };
     }
 
