@@ -7061,77 +7061,62 @@ ${fileGenerationTrainingText()}`;
         const result = computeReceiptSettlementPreview(b, chosen, currentGrandTotal(), dispNow);
         explainEl.textContent = buildReceiptExplanation(result, chosenSum, currentGrandTotal());
       };
-      const refreshAllDisplays = (skipEl)=>{
-        if(surplusInput!==skipEl) surplusInput.value = receiptSurplus? groupDigitsRight(String(receiptSurplus),3) : '0';
-        if(shortfallInput!==skipEl) shortfallInput.value = receiptShortfall? `- ${groupDigitsRight(String(receiptShortfall),3)}` : '0';
-        if(totalInput!==skipEl) totalInput.value = `${groupDigitsRight(String(currentGrandTotal()),3)} đ`;
+      const updateGrandTotalDisplay = ()=>{
+        if(document.activeElement===totalInput) return; // đang gõ dở ở chính ô Tổng thì không tự ghi đè
+        totalInput.value = `${groupDigitsRight(String(currentGrandTotal()),3)} đ`;
         updateExplanation();
         checkTotalValid();
       };
-
-      // =====================================================================
-      // Cơ chế nhập số CHẮC CHẮN không lỗi con trỏ: tự quản lý CHUỖI SỐ THÔ (raw digits) làm nguồn
-      // sự thật duy nhất cho từng ô, chặn hẳn cách gõ mặc định của trình duyệt (preventDefault mọi
-      // phím số/Backspace rồi tự chèn/xoá vào chuỗi thô, sau đó tự vẽ lại chuỗi có định dạng) — nhờ
-      // vậy KHÔNG BAO GIỜ còn phụ thuộc vào việc tính lại vị trí con trỏ sau khi định dạng lại.
-      // =====================================================================
-      function wireDigitInput(input, maxDigits, formatFn, onRawChange){
-        input.dataset.raw = '';
-        input.addEventListener('keydown', (e)=>{
-          if(e.key==='Enter'){ e.preventDefault(); input.blur(); return; }
-          if(e.key==='Backspace' || e.key==='Delete'){
-            e.preventDefault();
-            input.dataset.raw = input.dataset.raw.slice(0,-1);
-            input.value = formatFn(input.dataset.raw);
-            onRawChange(input.dataset.raw);
-            return;
-          }
-          if(/^[0-9]$/.test(e.key)){
-            e.preventDefault();
-            let raw = (input.dataset.raw + e.key).replace(/^0+(?=\d)/,'').slice(0,maxDigits);
-            input.dataset.raw = raw;
-            input.value = formatFn(raw);
-            onRawChange(raw);
-            return;
-          }
-          if(!['Tab','ArrowLeft','ArrowRight','Home','End','Shift'].includes(e.key)) e.preventDefault();
-        });
-        input.addEventListener('paste', (e)=>{
-          e.preventDefault();
-          const text = (e.clipboardData||window.clipboardData).getData('text');
-          let raw = (input.dataset.raw + text.replace(/[^\d]/g,'')).replace(/^0+(?=\d)/,'').slice(0,maxDigits);
-          input.dataset.raw = raw;
-          input.value = formatFn(raw);
-          onRawChange(raw);
-        });
-      }
-      wireDigitInput(surplusInput, 10, (raw)=> raw? groupDigitsRight(raw,3) : '0', (raw)=>{
-        receiptSurplus = parseInt(raw,10)||0;
-        if(receiptSurplus>0 && receiptShortfall>0){ receiptShortfall = 0; shortfallInput.dataset.raw=''; }
-        refreshAllDisplays(surplusInput);
+      // Bấm vào ô mà đang là "0" thì xoá trắng để gõ luôn, không cần tự xoá tay.
+      surplusInput.addEventListener('focus', ()=>{ if(surplusInput.value==='0') surplusInput.value=''; });
+      shortfallInput.addEventListener('focus', ()=>{ if(shortfallInput.value==='0') shortfallInput.value=''; });
+      surplusInput.addEventListener('blur', ()=>{ if(surplusInput.value.trim()==='') surplusInput.value='0'; });
+      shortfallInput.addEventListener('blur', ()=>{ if(shortfallInput.value.trim()==='' || shortfallInput.value.trim()==='-') shortfallInput.value='0'; });
+      // Ô "Tổng tất cả": bấm vào xoá trắng để nhập; rời khỏi/Enter mà để trống thì tự quay về đúng
+      // số tự động theo công thức (không giữ nguyên số cũ vô nghĩa).
+      totalInput.addEventListener('focus', ()=>{ totalInput.value=''; });
+      totalInput.addEventListener('blur', ()=>{ if(totalInput.value.trim()==='') updateGrandTotalDisplay(); });
+      totalInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); totalInput.blur(); } });
+      // Lưu ý: KHÔNG được gọi renderBody() ngay trong sự kiện "input" — vì render lại toàn bộ modal
+      // sẽ tạo ra 1 <input> MỚI hoàn toàn, làm mất focus/con trỏ đang gõ dở. Chỉ cập nhật đúng các ô
+      // liên quan trực tiếp bằng JS, và luôn lọc bỏ số 0 thừa ở đầu + ép con trỏ về cuối ô.
+      surplusInput.addEventListener('input', ()=>{
+        let digits = surplusInput.value.replace(/[^\d]/g,'').replace(/^0+(?=\d)/,'').slice(0,10);
+        surplusInput.value = groupDigitsRight(digits,3);
+        receiptSurplus = parseInt(digits,10)||0;
+        if(receiptSurplus>0 && receiptShortfall>0){
+          receiptShortfall = 0;
+          shortfallInput.value = '0';
+        }
+        const p = surplusInput.value.length; surplusInput.setSelectionRange(p,p);
+        updateGrandTotalDisplay();
       });
-      wireDigitInput(shortfallInput, 10, (raw)=> raw? `- ${groupDigitsRight(raw,3)}` : '0', (raw)=>{
-        receiptShortfall = parseInt(raw,10)||0;
-        if(receiptShortfall>0 && receiptSurplus>0){ receiptSurplus = 0; surplusInput.dataset.raw=''; }
-        refreshAllDisplays(shortfallInput);
+      shortfallInput.addEventListener('input', ()=>{
+        let digits = shortfallInput.value.replace(/[^\d]/g,'').replace(/^0+(?=\d)/,'').slice(0,10);
+        receiptShortfall = parseInt(digits,10)||0;
+        shortfallInput.value = digits==='0' || digits==='' ? '0' : `- ${groupDigitsRight(digits,3)}`;
+        if(receiptShortfall>0 && receiptSurplus>0){
+          receiptSurplus = 0;
+          surplusInput.value = '0';
+        }
+        const p = shortfallInput.value.length; shortfallInput.setSelectionRange(p,p);
+        updateGrandTotalDisplay();
       });
-      wireDigitInput(totalInput, 12, (raw)=> raw? `${groupDigitsRight(raw,3)} đ` : '', (raw)=>{
-        const newTotal = parseInt(raw,10)||0;
+      // Nhập ngược từ ô "Tổng tất cả": suy ra lại tiền dư/tiền thiếu tương ứng, cập nhật 2 ô kia.
+      totalInput.addEventListener('input', ()=>{
+        let digits = totalInput.value.replace(/[^\d]/g,'').replace(/^0+(?=\d)/,'').slice(0,12);
+        totalInput.value = digits? `${groupDigitsRight(digits,3)} đ` : '';
+        const p = totalInput.value.length - 2; totalInput.setSelectionRange(Math.max(0,p),Math.max(0,p));
+        const newTotal = parseInt(digits,10)||0;
         const diff = newTotal - chosenSum;
         if(diff>0){ receiptSurplus = diff; receiptShortfall = 0; }
         else if(diff<0){ receiptShortfall = -diff; receiptSurplus = 0; }
         else { receiptSurplus = 0; receiptShortfall = 0; }
-        refreshAllDisplays(totalInput);
+        surplusInput.value = receiptSurplus? groupDigitsRight(String(receiptSurplus),3) : '0';
+        shortfallInput.value = receiptShortfall? `- ${groupDigitsRight(String(receiptShortfall),3)}` : '0';
+        updateExplanation();
+        checkTotalValid();
       });
-      // Bấm vào ô mà đang là "0" thì xoá trắng để gõ luôn, không cần tự xoá tay.
-      surplusInput.addEventListener('focus', ()=>{ if(surplusInput.value==='0'){ surplusInput.value=''; surplusInput.dataset.raw=''; } });
-      shortfallInput.addEventListener('focus', ()=>{ if(shortfallInput.value==='0'){ shortfallInput.value=''; shortfallInput.dataset.raw=''; } });
-      surplusInput.addEventListener('blur', ()=>{ if(surplusInput.value.trim()==='') surplusInput.value='0'; });
-      shortfallInput.addEventListener('blur', ()=>{ if(shortfallInput.value.trim()==='' || shortfallInput.value.trim()==='-') shortfallInput.value='0'; });
-      // Ô "Tổng tất cả": bấm vào xoá trắng để nhập; rời khỏi mà để trống thì tự quay về đúng số tự
-      // động theo công thức (không giữ nguyên số cũ vô nghĩa).
-      totalInput.addEventListener('focus', ()=>{ totalInput.value=''; totalInput.dataset.raw=''; });
-      totalInput.addEventListener('blur', ()=>{ if(totalInput.value.trim()===''){ totalInput.value = `${groupDigitsRight(String(currentGrandTotal()),3)} đ`; } });
 
       // Nút chữ "i" cạnh "Tổng tất cả (số tiền thực nhận)"
       const totalInfoBtn = wrap.querySelector('#rcpt-total-info');
