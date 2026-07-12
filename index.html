@@ -212,7 +212,7 @@
   .sv-sticky-1, .sv-sticky-2{ box-shadow:2px 0 4px -2px rgba(0,0,0,.15); }
   /* Cột dính riêng cho modal "Tính tiền lãi và phê duyệt đóng lãi" — cột đầu là checkbox "Đã đóng
      lãi" nên cần rộng hơn cột icon-bút bình thường (40px) để chứa chữ. */
-  .ia-sticky-1{ position:sticky; left:0; z-index:2; min-width:160px; text-align:left; }
+  .ia-sticky-1{ position:sticky; left:0; z-index:2; min-width:110px; text-align:center; }
   .ia-sticky-2{ position:sticky; left:92px; z-index:2; }
   thead .ia-sticky-1, thead .ia-sticky-2{ z-index:3; background:var(--paper-2); }
   .ia-sticky-1, .ia-sticky-2{ box-shadow:2px 0 4px -2px rgba(0,0,0,.15); }
@@ -390,6 +390,18 @@
     50%{ background:#1b7a3d; color:#fff; }
   }
   .ext-action-btn.ext-green{ animation-name: extPulseGreen; color:#1b5e20; }
+  /* Nút "hộp chứa Quý" + nút chữ "i" (thông tin) trong modal Đóng lãi — góc vuông 90 độ, dính sát
+     nhau, phóng to khi hover, nhấp nháy nhanh lúc mới mở bảng rồi tự dừng sau ~3 giây. */
+  @keyframes qboxPulse{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.1); } }
+  .qbox-wrap{ display:inline-flex; margin:3px; }
+  .qbox-btn{ border:1px solid #000; border-radius:0; padding:6px 12px; font-weight:700; cursor:pointer; background:#fff; transition:transform .12s ease; }
+  .qbox-btn.qbox-pulsing{ animation: qboxPulse 0.5s ease-in-out infinite; }
+  .qbox-btn:hover{ transform:scale(1.3); position:relative; z-index:6; }
+  .qbox-btn.qbox-selected{ background:#1b7a3d; color:#fff; }
+  .qbox-info-btn{ border:1px solid #000; border-left:none; border-radius:0; width:26px; font-weight:800; font-style:italic; cursor:pointer; background:#fff; transition:transform .12s ease; }
+  .qbox-info-btn:hover{ transform:scale(1.3); position:relative; z-index:6; }
+  .qbox-selectall-btn{ border:1px solid #000; border-radius:6px; padding:6px 14px; font-weight:700; cursor:pointer; background:var(--paper-2); transition:transform .12s ease; margin:3px; }
+  .qbox-selectall-btn:hover{ transform:scale(1.3); position:relative; z-index:6; }
   .fab-chat{
     position:fixed; right:22px; bottom:22px; width:60px; height:60px; border-radius:50%;
     background:linear-gradient(145deg, var(--gold), var(--rice-dark)); color:#fff; border:none;
@@ -1139,6 +1151,7 @@
     bind('interestApprovalColumnPrefs', v => { state.iaColumnPrefsShared = v || null; });
     bind('quarterSettingsHistory', v => { state.quarterSettingsHistory = snapToArray(v).sort((a,b)=> new Date(b.time)-new Date(a.time)); });
     bind('loanExtensions', v => { state.loanExtensions = v || {}; });
+    bind('interestPaymentBoxes', v => { state.interestPaymentBoxes = v || {}; });
     bind('expenses', v => { state.expenses = snapToArray(v); });
     bind('trash', v => { state.trash = snapToArray(v); });
     // Nhật ký: chỉ lấy 500 dòng gần nhất, sắp xếp mới nhất lên đầu
@@ -1518,6 +1531,7 @@
     showLoanApprovalDetails:false, // đang mở khung "Xem thông tin chi tiết số tiền phê duyệt đóng lãi và thanh toán khoản vay"
     showInterestApprovalModal:false,   // đang mở modal "Tính tiền lãi và phê duyệt đóng lãi"
     loanExtensions:null,               // {[borrowerId]: [{from,to,rateType,ratePct,allocMode,...}]} đã lưu chung của xã
+    interestPaymentBoxes:null,         // {[borrowerId]: {totalPaid, payments:{boxKey:amount}}} — "Hộp tiền đã đóng lãi"
     showExtensionModal:false,          // đang mở modal "Gia hạn nợ"
     interestApprovals:null,            // {[filterKey]: {[borrowerId]:true}} đã lưu chung của xã (tải qua realtime bind)
     interestApprovalDraft:null,        // Set borrowerId đang tích chọn trong modal (chưa lưu)
@@ -2296,6 +2310,7 @@
   // =====================================================================
   function borrowerQuarterBoxes(b){
     if(!b.loanDate || !b.dueDate) return [];
+    const principal = parseFloat(b.principal)||0;
     const segments = borrowerTimelineSegments(b);
     const boxes = [];
     for(const seg of segments){
@@ -2308,6 +2323,9 @@
       const realEndInfo = endInfo || startInfo;
       let cur = { qk:startInfo.qk, year:startInfo.year };
       let guard = 0;
+      // Lãi suất (%/năm) áp dụng cho TOÀN BỘ hộp chứa thuộc đoạn này — lấy y hệt cột ẩn "Lãi suất
+      // (%/năm) (trong hạn)" nếu extLevel=0, hoặc "...(gia hạn lần N)" tương ứng nếu extLevel>0.
+      const segRatePct = seg.extLevel===0 ? getInTermColumnValue(b,'rate') : getExtensionLevelColumnValue(b, seg.extLevel, 'rate');
       while(guard++ < 400){
         const range = resolveQuarterDatesForYear(cur.qk, cur.year);
         const isStartQ = (cur.qk===startInfo.qk && cur.year===startInfo.year);
@@ -2316,7 +2334,13 @@
         if(isStartQ && seg.from > range.from){ boxFrom = seg.from; short = true; }
         if(isEndQ && seg.to < range.to){ boxTo = seg.to; short = true; }
         const days = Math.max(0, daysBetween(boxFrom, boxTo));
-        boxes.push({ qk:cur.qk, year:cur.year, short, extLevel:seg.extLevel, from:boxFrom, to:boxTo, days });
+        const cycleDays = annualCycleDaysForYear(cur.year);
+        const interestAmount = Math.round(principal * ((segRatePct||0)/100/cycleDays) * days);
+        boxes.push({
+          key: `${cur.qk}-${cur.year}-${seg.extLevel}`, // định danh ỔN ĐỊNH (không đổi dù tên hiển thị * / # có đổi)
+          qk:cur.qk, year:cur.year, short, extLevel:seg.extLevel, from:boxFrom, to:boxTo, days,
+          rate: segRatePct||0, interestAmount,
+        });
         if(isEndQ) break;
         cur = nextQuarterCycle(cur.qk, cur.year);
       }
@@ -2369,58 +2393,74 @@
       return !isNaN(f.getTime()) && f<=today;
     });
   }
-  // Tách 1 filterKey đã lưu phê duyệt (vd "q1-q2__2026-2027") ngược lại thành khoảng ngày cụ thể,
-  // dùng để tra cứu 1 Quý bất kỳ có nằm trong phạm vi đã phê duyệt đó hay không.
-  function filterKeyToRange(key){
-    const parts = key.split('__');
-    if(parts.length!==2) return null;
-    const quarters = parts[0].split('-'), years = parts[1].split('-').map(Number);
-    if(!quarters.length || !years.length || years.some(isNaN)) return null;
-    const selQ = quarters.slice().sort((a,b)=>quarterSeqIndex(a)-quarterSeqIndex(b));
-    const selY = years.slice().sort((a,b)=>a-b);
-    const firstQ = selQ[0], lastQ = selQ[selQ.length-1];
-    const minY = selY[0], maxY = selY[selY.length-1];
-    const info = (qk,baseYear)=>{
-      if(qk.endsWith('prev')) return { qk:qk.replace('prev',''), year:baseYear-1 };
-      if(qk.endsWith('next')) return { qk:qk.replace('next',''), year:baseYear+1 };
-      return { qk, year:baseYear };
-    };
-    const s = info(firstQ, minY), e = info(lastQ, maxY);
-    const sr = resolveQuarterDatesForYear(s.qk, s.year), er = resolveQuarterDatesForYear(e.qk, e.year);
-    if(!sr.from || !er.to) return null;
-    return { from:sr.from, to:er.to };
+  // =====================================================================
+  // "HỘP TIỀN ĐÃ ĐÓNG LÃI" — mỗi người vay có đúng 1 hộp, sinh ra ngay khi thêm người vay (mặc định
+  // 0đ). Lưu tại secretdata/{secretId}/interestPaymentBoxes/{borrowerId} = {
+  //   totalPaid: tổng tất cả số tiền đã từng được "Xác nhận đóng lãi thành công" (kể cả phần dư),
+  //   payments: { [boxKey]: amount } — số tiền đã GÁN CỤ THỂ cho từng "hộp chứa Quý" (boxKey =
+  //             "qk-year-extLevel", một định danh ỔN ĐỊNH không đổi dù tên hiển thị */# có đổi).
+  // }
+  // "Số tiền còn thừa lại chưa thuộc về quý nào" = totalPaid − tổng các khoản đã gán cụ thể.
+  // =====================================================================
+  function getInterestPaymentBoxRaw(borrowerId){
+    return (state.interestPaymentBoxes && state.interestPaymentBoxes[borrowerId]) || { totalPaid:0, payments:{} };
   }
-  // 1 Quý cụ thể (qk+year) của 1 người vay được coi là "đã đóng lãi" nếu có ÍT NHẤT 1 lần phê duyệt
-  // đã lưu (secretdata/interestApprovals) mà borrower này có mặt VÀ khoảng ngày phê duyệt đó chứa
-  // trọn khoảng ngày của Quý đang xét.
-  function isBorrowerQuarterApproved(borrowerId, qk, year){
-    const approvals = state.interestApprovals || {};
-    const qRange = resolveQuarterDatesForYear(qk, year);
-    if(!qRange.from) return false;
-    const qFrom = new Date(qRange.from+'T00:00:00'), qTo = new Date(qRange.to+'T00:00:00');
-    for(const key of Object.keys(approvals)){
-      const entry = approvals[key];
-      if(!entry || !entry[borrowerId]) continue;
-      const r = filterKeyToRange(key);
-      if(!r || !r.from) continue;
-      const rFrom = new Date(r.from+'T00:00:00'), rTo = new Date(r.to+'T00:00:00');
-      if(rFrom<=qFrom && rTo>=qTo) return true;
-    }
-    return false;
-  }
-  // Trả về { unpaidText, paidText } cho 1 người vay — quý cũ trước/mới sau (chưa đóng), quý mới
-  // trước/cũ sau (đã đóng), không bao giờ trùng thông tin giữa 2 cột.
-  // "Quý chưa đóng lãi": CHỈ xét trong phạm vi quá khứ + hiện tại (không chứa quý tương lai) — dùng
-  // borrowerQuarterTimeline() đã lọc theo hôm nay.
-  // "Quý đã đóng lãi": xét TOÀN BỘ hộp chứa (quá khứ + hiện tại + TƯƠNG LAI) — vì người vay có thể
-  // chủ động đóng lãi trước cho cả các quý chưa tới, nên dùng borrowerQuarterBoxes() KHÔNG lọc.
-  function borrowerQuarterPaymentLabels(b){
-    const pastAndCurrent = borrowerQuarterTimeline(b);
+  // Tính TOÀN BỘ trạng thái hiện hành của Hộp tiền — luôn tính động từ dữ liệu thô + "hộp chứa Quý"
+  // hiện tại, nên tự động đúng theo mọi thay đổi (mốc Quý, lãi suất, gia hạn...).
+  function computeInterestPaymentBoxState(b){
+    const raw = getInterestPaymentBoxRaw(b.id);
+    const totalPaid = raw.totalPaid||0;
+    const payments = raw.payments||{};
     const allBoxes = borrowerQuarterBoxes(b);
-    const unpaid = pastAndCurrent.filter(item=> !isBorrowerQuarterApproved(b.id, item.qk, item.year));
-    const paid = allBoxes.filter(item=> isBorrowerQuarterApproved(b.id, item.qk, item.year));
-    const unpaidText = unpaid.map(formatTimelineQuarterLabel).join(', '); // cũ trước, mới sau
-    const paidText = paid.slice().reverse().map(formatTimelineQuarterLabel).join(', '); // mới trước, cũ sau
+    const boxByKey = {}; allBoxes.forEach(bx=> boxByKey[bx.key]=bx);
+    const paidEntries = Object.keys(payments).map(k=>({ key:k, box:boxByKey[k], amount:payments[k]||0 })).filter(e=>e.box && e.amount>0);
+    const paidSum = paidEntries.reduce((s,e)=>s+e.amount, 0);
+    const leftover = Math.max(0, Math.round((totalPaid - paidSum)*100)/100);
+    return { totalPaid, payments, paidEntries, paidSum, leftover, allBoxes };
+  }
+  // "Dàn xếp" số tiền thừa: nếu số dư (leftover) đủ trả trọn 1 hay nhiều "hộp chứa Quý" đang CHƯA có
+  // khoản trả riêng, thì tự động gán trọn số tiền quý đó vào payments (ưu tiên quý nào ĐỦ KHẢ NĂNG
+  // trả được, không nhất thiết theo thứ tự cũ/mới). Chạy khi vừa xác nhận thêm 1 khoản đóng lãi mới.
+  async function settleInterestPaymentLeftover(b){
+    const st = computeInterestPaymentBoxState(b);
+    let leftover = st.leftover;
+    if(leftover<=0) return;
+    const payments = Object.assign({}, st.payments);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const candidates = st.allBoxes.filter(bx=>{
+      const f = new Date(bx.from+'T00:00:00');
+      return !isNaN(f.getTime()) && f<=today && !payments[bx.key] && bx.interestAmount>0;
+    });
+    let changed = false;
+    for(const bx of candidates){
+      if(leftover >= bx.interestAmount){ payments[bx.key] = bx.interestAmount; leftover = Math.round((leftover-bx.interestAmount)*100)/100; changed = true; }
+    }
+    if(changed) await cSet('interestPaymentBoxes/'+b.id, { totalPaid: st.totalPaid, payments });
+  }
+  // Toàn bộ thông tin hiển thị của Hộp tiền (đúng cấu trúc bạn mô tả) — quý đã đóng (mới->cũ), tổng,
+  // số dư thừa, quý chưa đóng (cũ->mới, chỉ quá khứ+hiện tại), tổng chưa đóng.
+  function computeInterestPaymentBoxDisplay(b){
+    const st = computeInterestPaymentBoxState(b);
+    const allBoxes = st.allBoxes;
+    const indexOf = {}; allBoxes.forEach((bx,i)=> indexOf[bx.key]=i);
+    const paidSorted = st.paidEntries.slice().sort((a,c)=> indexOf[c.key]-indexOf[a.key]); // mới trước, cũ sau
+    const paidLines = paidSorted.map(e=> ({ name: formatTimelineQuarterLabel(e.box), amount: e.amount }));
+    const today = new Date(); today.setHours(0,0,0,0);
+    const paidKeys = new Set(st.paidEntries.map(e=>e.key));
+    const unpaidBoxes = allBoxes.filter(bx=>{
+      const f = new Date(bx.from+'T00:00:00');
+      return !isNaN(f.getTime()) && f<=today && !paidKeys.has(bx.key);
+    }); // đã theo đúng thứ tự cũ->mới (allBoxes vốn đã là chuỗi thời gian)
+    const unpaidLines = unpaidBoxes.map(bx=> ({ name: formatTimelineQuarterLabel(bx), amount: bx.interestAmount, box:bx }));
+    const unpaidTotal = unpaidLines.reduce((s,x)=>s+x.amount, 0);
+    return { totalPaid: st.totalPaid, paidLines, paidTotal: st.paidSum, leftover: st.leftover, unpaidLines, unpaidTotal, allBoxes, paidKeys };
+  }
+  // Trả về { unpaidText, paidText } cho cột công khai "Quý chưa/đã đóng lãi" — nguồn dữ liệu giờ là
+  // Hộp tiền đã đóng lãi (không còn dùng checkbox phê duyệt cũ nữa).
+  function borrowerQuarterPaymentLabels(b){
+    const disp = computeInterestPaymentBoxDisplay(b);
+    const unpaidText = disp.unpaidLines.map(x=>x.name).join(', '); // cũ trước, mới sau
+    const paidText = disp.paidLines.map(x=>x.name).join(', '); // mới trước, cũ sau (đã sort sẵn)
     return { unpaidText, paidText };
   }
 
@@ -6182,25 +6222,25 @@ ${fileGenerationTrainingText()}`;
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th class="ia-sticky-1">${nameCol? escapeHtml(nameCol.label) : ''}</th>
-              <th>Lịch sử đóng lãi</th>
+              <th class="ia-sticky-1">Lịch sử đóng lãi</th>
               <th>Quyết định</th>
+              <th>${nameCol? escapeHtml(nameCol.label) : ''}</th>
               ${restCols.map(c=>`<th>${escapeHtml(c.label)}</th>`).join('')}
             </tr></thead>
             <tbody>${groupList.map(b=>{
               const dueRef = proj? proj.dueDate : b.dueDate;
               const rowColor = daysRemainingRowColor(dueRef);
               return `<tr${rowColor? ` style="background:${rowColor};"` : ''}>
-                <td class="ia-sticky-1" style="background:var(--white);">${nameCol? nameCol.get(b) : ''}</td>
-                <td><button class="ext-action-btn ext-green preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ia-hist="${b.id}">Xem</button></td>
+                <td class="ia-sticky-1" style="background:var(--white);"><button class="ext-action-btn ext-green preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ia-hist="${b.id}">Xem</button></td>
                 <td><button class="ext-action-btn ext-green preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ia-pay="${b.id}">Đóng tiền lãi</button></td>
+                <td>${nameCol? nameCol.get(b) : ''}</td>
                 ${restCols.map(c=>`<td class="${c.align==='right'?'money':''}">${c.get(b)}</td>`).join('')}
               </tr>`;
             }).join('')}
             <tr style="background:var(--paper-2); font-weight:700;">
-              <td class="ia-sticky-1" style="background:var(--paper-2);">${borrowerAggregateCellValue('name', groupList)}</td>
-              <td><button class="ext-action-btn ext-green" data-ia-hist-locked="1">Xem</button></td>
+              <td class="ia-sticky-1" style="background:var(--paper-2);"><button class="ext-action-btn ext-green" data-ia-hist-locked="1">Xem</button></td>
               <td><button class="ext-action-btn ext-green" data-ia-pay-locked="1">Đóng tiền lãi</button></td>
+              <td>${borrowerAggregateCellValue('name', groupList)}</td>
               ${restCols.map(c=>`<td class="${c.align==='right'?'money':''}">${borrowerAggregateCellValue(c.key, groupList)}</td>`).join('')}
             </tr>
             </tbody>
@@ -6622,21 +6662,212 @@ ${fileGenerationTrainingText()}`;
     renderBody();
   }
 
-  // Modal con "Phê duyệt đóng tiền lãi cho hộ vay [Họ và tên]" — mở từ nút "Đóng tiền lãi" ở từng
-  // dòng người vay trong modal "Tính tiền lãi và phê duyệt đóng lãi". Nội dung bên trong để trống,
-  // sẽ bổ sung sau.
-  function renderInterestPaymentApprovalModal(b){
+  // Bảng phụ nhỏ "Thông tin chi tiết Quý ... năm ... của hộ vay ..." — hiện khi bấm nút chữ "i"
+  // cạnh 1 nút hộp chứa Quý bất kỳ. Toàn bộ thông tin lấy trực tiếp từ chính "hộp chứa Quý" đó.
+  // Modal "THÔNG TIN LỊCH SỬ ĐÓNG TIỀN LÃI CỦA HỘ VAY [Họ và tên]" — mở từ nút "Xem" ở từng dòng
+  // người vay trong modal "Tính tiền lãi và phê duyệt đóng lãi". Hiển thị TOÀN BỘ nội dung Hộp tiền
+  // đã đóng lãi của người đó.
+  function renderInterestPaymentHistoryModal(b){
+    const disp = computeInterestPaymentBoxDisplay(b);
     const wrap = document.createElement('div');
     wrap.className = 'modal-bg';
+    const isEmpty = disp.totalPaid<=0 && disp.paidLines.length===0;
+    const bodyHtml = isEmpty
+      ? `<div class="empty-state"><div class="e-ico">🧾</div>Hộ vay này CHƯA đóng lãi lần nào.</div>`
+      : `
+        <div class="kv-row"><span>Tổng tiền đã đóng lãi</span><b>${moneySpaced(disp.totalPaid)}</b></div>
+        <div class="divider-lbl">Thông tin các quý đã đóng tiền lãi xong</div>
+        ${disp.paidLines.length? disp.paidLines.map(x=>`<div class="kv-row"><span>${escapeHtml(x.name)}</span><b>${moneySpaced(x.amount)}</b></div>`).join('') : `<p class="sub">Chưa có quý nào đóng xong.</p>`}
+        <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng ${disp.paidLines.length} quý là</span><b>${moneySpaced(disp.paidTotal)}</b></div>
+        <div class="kv-row" style="margin-top:10px;"><span>Số tiền còn thừa lại chưa thuộc về quý nào</span><b>${moneySpaced(disp.leftover)}</b></div>
+        <div class="divider-lbl">Thông tin các quý chưa đóng lãi</div>
+        ${disp.unpaidLines.length? disp.unpaidLines.map(x=>`<div class="kv-row"><span>${escapeHtml(x.name)}</span><b>${moneySpaced(x.amount)}</b></div>`).join('') : `<p class="sub">Không còn quý nào chưa đóng lãi.</p>`}
+        <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng số tiền chưa đóng lãi</span><b>${moneySpaced(disp.unpaidTotal)}</b></div>`;
     wrap.innerHTML = `
       <div class="modal" style="max-width:96vw; width:640px;">
-        <div class="modal-head"><h3>Phê duyệt đóng tiền lãi cho hộ vay ${escapeHtml(b.name)}</h3><button class="modal-close preview-allow" id="iapay-close">✕</button></div>
-        <div class="modal-body"></div>
+        <div class="modal-head"><h3>THÔNG TIN LỊCH SỬ ĐÓNG TIỀN LÃI CỦA HỘ VAY ${escapeHtml(b.name).toUpperCase()}</h3><button class="modal-close" id="iahist-close">✕</button></div>
+        <div class="modal-body">${bodyHtml}</div>
+        <div class="modal-foot"><button class="btn btn-primary" id="iahist-close2">Đóng bảng</button></div>
       </div>`;
     document.body.appendChild(wrap);
     const close = ()=> wrap.remove();
-    wrap.querySelector('#iapay-close').onclick = close;
+    wrap.querySelector('#iahist-close').onclick = close;
+    wrap.querySelector('#iahist-close2').onclick = close;
     wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
+  }
+
+  function renderQuarterBoxInfoModal(b, box){
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-bg';
+    const qName = formatTimelineQuarterLabel(box);
+    const lines = [];
+    lines.push(`đây là ${qName} chưa đóng lãi`);
+    lines.push(`Bắt đầu từ ngày ${fmtDate(box.from)} đến ngày ${fmtDate(box.to)}, tổng số ngày trong quý này là ${box.days} ngày.`);
+    lines.push(`Số tiền chưa đóng trong quý này là: ${moneySpaced(box.interestAmount)}.`);
+    lines.push(`Lãi suất đang được áp dụng trong quý này: ${String(box.rate).replace('.',',')}%/năm.`);
+    if(box.short) lines.push(`Đây là quý KHÔNG đủ ngày như các quý bình thường khác (vì vậy nó có dấu * ở tên quý).`);
+    if((box.extLevel||0)===0) lines.push(`Đây là quý đang trong thời gian chưa bị quá hạn.`);
+    else lines.push(`Đây là quý đang trong thời gian gia hạn lần ${box.extLevel} (vì vậy nó có ${'#'.repeat(box.extLevel)} ở tên quý).`);
+    wrap.innerHTML = `
+      <div class="modal" style="max-width:94vw; width:520px;">
+        <div class="modal-head"><h3>Thông tin chi tiết ${escapeHtml(qName)} của hộ vay ${escapeHtml(b.name)}</h3><button class="modal-close" id="qbi-close">✕</button></div>
+        <div class="modal-body">${lines.map(l=>`<p style="margin:0 0 8px;">${escapeHtml(l)}</p>`).join('')}</div>
+        <div class="modal-foot"><button class="btn btn-primary" id="qbi-close2">Đóng bảng</button></div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const close = ()=> wrap.remove();
+    wrap.querySelector('#qbi-close').onclick = close;
+    wrap.querySelector('#qbi-close2').onclick = close;
+    wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
+  }
+
+  // Modal con "Đóng lãi" cho 1 người vay — mở từ nút "Đóng tiền lãi" ở từng dòng trong modal "Tính
+  // tiền lãi và phê duyệt đóng lãi". 2 chế độ: 'select' (chọn các Quý muốn đóng) -> 'receipt' (biên
+  // lai thu tiền lãi, xác nhận xong sẽ ghi vào Hộp tiền đã đóng lãi của người vay).
+  function renderInterestPaymentApprovalModal(b){
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-bg';
+    document.body.appendChild(wrap);
+    const close = ()=> wrap.remove();
+    let mode = 'select';
+    const selectedKeys = new Set();
+    let receiptSurplus = 0, receiptShortfall = 0;
+
+    function renderBody(){
+      if(mode==='select'){
+        const disp = computeInterestPaymentBoxDisplay(b);
+        const pastList = disp.unpaidLines; // đã cũ->mới
+        const futureList = disp.allBoxes.filter(bx=> !disp.paidKeys.has(bx.key) && !pastList.some(u=>u.box===bx))
+          .map(bx=> ({ name: formatTimelineQuarterLabel(bx), amount: bx.interestAmount, box:bx }));
+        const renderQuarterGroup = (list, groupId)=>{
+          if(!list.length) return '';
+          const allSel = list.every(x=> selectedKeys.has(x.box.key));
+          return `
+            <div style="margin-top:6px;">
+              ${list.map(x=>{
+                const sel = selectedKeys.has(x.box.key);
+                return `<span class="qbox-wrap">
+                  <button class="qbox-btn qbox-pulsing preview-allow ${sel?'qbox-selected':''}" data-qkey="${x.box.key}" data-group="${groupId}">${escapeHtml(x.name)}</button>
+                  <button class="qbox-info-btn qbox-pulsing preview-allow" data-qinfo="${x.box.key}">i</button>
+                </span>`;
+              }).join('')}
+              <button class="qbox-selectall-btn preview-allow" data-selall="${groupId}">${allSel? 'Bỏ chọn tất cả' : 'Chọn tất cả'}</button>
+            </div>`;
+        };
+        const selectedList = [...selectedKeys];
+        const canProceed = selectedList.length>0;
+        wrap.innerHTML = `
+          <div class="modal" style="max-width:96vw; width:900px;">
+            <div class="modal-head"><h3>Phê duyệt đóng tiền lãi cho hộ vay ${escapeHtml(b.name)}</h3><button class="modal-close preview-allow" id="iapay-close">✕</button></div>
+            <div class="modal-body">
+              <div class="divider-lbl" style="margin-top:0;">Các Quý chưa đóng lãi từ QUÁ KHỨ tới HIỆN TẠI:</div>
+              ${pastList.length? renderQuarterGroup(pastList,'past') : `<p class="sub">Không có Quý nào chưa đóng lãi từ quá khứ tới hiện tại.</p>`}
+              <div class="divider-lbl">Các Quý chưa đóng lãi trong TƯƠNG LAI:</div>
+              ${futureList.length? renderQuarterGroup(futureList,'future') : `<p class="sub">Không có Quý nào chưa đóng lãi trong TƯƠNG LAI.</p>`}
+            </div>
+            <div class="modal-foot">
+              <button class="btn btn-ghost preview-allow" id="iapay-cancel">Đóng bảng</button>
+              <button class="btn btn-primary preview-allow" id="iapay-start" ${canProceed?'':'disabled'}>Bắt đầu tính tiền lãi và đóng lãi</button>
+            </div>
+          </div>`;
+        wireSelect(pastList.concat(futureList));
+        // Hiệu ứng nhấp nháy phóng to 1.1x liên tục trong 3 giây rồi tự dừng hẳn.
+        setTimeout(()=>{ wrap.querySelectorAll('.qbox-pulsing').forEach(el=>el.classList.remove('qbox-pulsing')); }, 3000);
+      } else {
+        const disp = computeInterestPaymentBoxDisplay(b);
+        const allBoxByKey = {}; disp.allBoxes.forEach(bx=> allBoxByKey[bx.key]=bx);
+        const chosen = [...selectedKeys].map(k=>allBoxByKey[k]).filter(Boolean);
+        const chosenSum = chosen.reduce((s,bx)=>s+bx.interestAmount, 0);
+        const grandTotal = chosenSum + receiptSurplus - receiptShortfall;
+        wrap.innerHTML = `
+          <div class="modal" style="max-width:96vw; width:640px;">
+            <div class="modal-head"><h3>BIÊN LAI THU TIỀN LÃI ĐỐI VỚI HỘ VAY ${escapeHtml(b.name).toUpperCase()}</h3><button class="modal-close preview-allow" id="rcpt-close">✕</button></div>
+            <div class="modal-body">
+              <p style="margin:0 0 6px; font-weight:700;">Các quý đóng lãi là:</p>
+              ${chosen.map(bx=>`<div class="kv-row"><span>${escapeHtml(formatTimelineQuarterLabel(bx))}</span><b>${moneySpaced(bx.interestAmount)}</b></div>`).join('')}
+              <div class="kv-row" style="border-top:1px solid var(--line); margin-top:6px; padding-top:6px;"><span>Tổng tiền các quý</span><b>${moneySpaced(chosenSum)}</b></div>
+              <div class="field" style="margin-top:10px;"><label>Số tiền đóng dư (đ)</label><input id="rcpt-surplus" class="preview-allow" value="${receiptSurplus? groupDigitsRight(String(receiptSurplus),3):'0'}"></div>
+              <div class="field"><label>Số tiền đóng thiếu (đ)</label><input id="rcpt-shortfall" class="preview-allow" value="${receiptShortfall? '- '+groupDigitsRight(String(receiptShortfall),3) : '0'}"></div>
+              <div class="kv-row" style="border-top:1px solid var(--line); margin-top:6px; padding-top:6px;"><span>Tổng tất cả</span><b>${moneySpaced(grandTotal)}</b></div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn btn-ghost preview-allow" id="rcpt-cancel">Huỷ (chưa phê duyệt)</button>
+              <button class="btn btn-primary preview-allow" id="rcpt-confirm">Xác nhận đóng lãi thành công</button>
+            </div>
+          </div>`;
+        wireReceipt(chosen, chosenSum);
+      }
+    }
+
+    function wireSelect(fullList){
+      wrap.querySelector('#iapay-close').onclick = close;
+      wrap.querySelector('#iapay-cancel').onclick = close;
+      wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
+      wrap.querySelectorAll('[data-qkey]').forEach(btn=>{
+        btn.onclick = ()=>{
+          const k = btn.dataset.qkey;
+          if(selectedKeys.has(k)) selectedKeys.delete(k); else selectedKeys.add(k);
+          renderBody();
+        };
+      });
+      wrap.querySelectorAll('[data-qinfo]').forEach(btn=>{
+        btn.onclick = (e)=>{
+          e.stopPropagation();
+          const bx = fullList.find(x=>x.box.key===btn.dataset.qinfo);
+          if(bx) renderQuarterBoxInfoModal(b, bx.box);
+        };
+      });
+      wrap.querySelectorAll('[data-selall]').forEach(btn=>{
+        btn.onclick = ()=>{
+          const grp = btn.dataset.selall;
+          const groupList = fullList.filter(x=> wrap.querySelector(`[data-qkey="${x.box.key}"][data-group="${grp}"]`));
+          const allSel = groupList.every(x=> selectedKeys.has(x.box.key));
+          groupList.forEach(x=>{ if(allSel) selectedKeys.delete(x.box.key); else selectedKeys.add(x.box.key); });
+          renderBody();
+        };
+      });
+      const startBtn = wrap.querySelector('#iapay-start');
+      if(startBtn) startBtn.onclick = ()=>{ if(!selectedKeys.size) return; mode='receipt'; renderBody(); };
+    }
+
+    function wireReceipt(chosen, chosenSum){
+      wrap.querySelector('#rcpt-close').onclick = close;
+      wrap.querySelector('#rcpt-cancel').onclick = close;
+      wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
+      const surplusInput = wrap.querySelector('#rcpt-surplus');
+      const shortfallInput = wrap.querySelector('#rcpt-shortfall');
+      surplusInput.addEventListener('input', ()=>{
+        let digits = surplusInput.value.replace(/[^\d]/g,'').slice(0,10);
+        surplusInput.value = groupDigitsRight(digits,3);
+        receiptSurplus = parseInt(digits,10)||0;
+        if(receiptSurplus>0 && receiptShortfall>0){ receiptShortfall = 0; }
+        renderBody();
+      });
+      shortfallInput.addEventListener('input', ()=>{
+        let digits = shortfallInput.value.replace(/[^\d]/g,'').slice(0,10);
+        receiptShortfall = parseInt(digits,10)||0;
+        if(receiptShortfall>0 && receiptSurplus>0){ receiptSurplus = 0; }
+        renderBody();
+      });
+      wrap.querySelector('#rcpt-confirm').onclick = async ()=>{
+        if(state.previewMode){ alert('Bạn đang ở chế độ tham quan, không thể xác nhận đóng lãi thật.'); return; }
+        if(!canEditModule('data')){ alert('Bạn không có quyền Sửa ở Sổ vay vốn nên không thể xác nhận đóng lãi. Vui lòng liên hệ Chủ mã định danh.'); return; }
+        const raw = getInterestPaymentBoxRaw(b.id);
+        const payments = Object.assign({}, raw.payments||{});
+        chosen.forEach(bx=>{ payments[bx.key] = bx.interestAmount; });
+        const grandTotal = chosenSum + receiptSurplus - receiptShortfall;
+        const newTotalPaid = (raw.totalPaid||0) + grandTotal;
+        await cSet('interestPaymentBoxes/'+b.id, { totalPaid: newTotalPaid, payments });
+        state.interestPaymentBoxes = state.interestPaymentBoxes||{};
+        state.interestPaymentBoxes[b.id] = { totalPaid:newTotalPaid, payments };
+        await settleInterestPaymentLeftover(b);
+        await pushLog('xác nhận', `đóng lãi cho hộ vay ${b.name} (${moneySpaced(grandTotal)})`);
+        showToast('Đã xác nhận đóng lãi thành công!');
+        close();
+      };
+    }
+
+    renderBody();
   }
 
   function renderInterestApprovalModal(){
@@ -6777,14 +7008,16 @@ ${fileGenerationTrainingText()}`;
       });
 
       // ---- Cột "Lịch sử đóng lãi" (Xem) và "Quyết định" (Đóng tiền lãi) ----
-      // Yêu cầu hiện tại: TẤT CẢ nút "Xem" (từng dòng lẫn dòng TỔNG) và nút "Đóng tiền lãi" ở dòng
-      // TỔNG đều tạm khoá chức năng (báo đang nâng cấp) — CHỈ nút "Đóng tiền lãi" ở từng dòng người
-      // vay là hoạt động thật, mở bảng phê duyệt riêng cho đúng người đó.
+      // Nút "Xem"/"Đóng tiền lãi" ở dòng TỔNG vẫn tạm khoá (báo đang nâng cấp). Nút "Xem" và "Đóng
+      // tiền lãi" ở TỪNG DÒNG người vay đều đã hoạt động thật.
       wrap.querySelectorAll('[data-ia-hist]').forEach(btn=>{
-        btn.onclick = ()=> alert('Tính năng "Xem lịch sử đóng lãi" đang được nâng cấp, sẽ sớm ra mắt.');
+        btn.onclick = ()=>{
+          const b = state.borrowers.find(x=>x.id===btn.dataset.iaHist);
+          if(b) renderInterestPaymentHistoryModal(b);
+        };
       });
       wrap.querySelectorAll('[data-ia-hist-locked]').forEach(btn=>{
-        btn.onclick = ()=> alert('Tính năng "Xem lịch sử đóng lãi" đang được nâng cấp, sẽ sớm ra mắt.');
+        btn.onclick = ()=> alert('Tính năng "Xem lịch sử đóng lãi" cho cả nhóm đang được nâng cấp, sẽ sớm ra mắt.');
       });
       wrap.querySelectorAll('[data-ia-pay-locked]').forEach(btn=>{
         btn.onclick = ()=> alert('Tính năng "Đóng tiền lãi" cho cả nhóm đang được nâng cấp, sẽ sớm ra mắt.');
