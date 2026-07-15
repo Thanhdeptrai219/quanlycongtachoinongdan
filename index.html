@@ -1745,7 +1745,7 @@
   // Mọi nơi trong giao diện, biểu mẫu, và file xuất (Excel/Word/PDF/In) đều PHẢI
   // lấy danh xưng qua các hàm dưới đây — tuyệt đối không viết chết chữ "Xã"/"Ấp".
   const ADMIN_LEVEL_OPTIONS = ['Xã', 'Phường'];
-  const SUB_ADMIN_OPTIONS = ['Khu dân cư', 'Ấp', 'Thôn', 'Khu phố', 'Xóm', 'Tổ', 'Khác'];
+  const SUB_ADMIN_OPTIONS = ['Khu dân cư', 'Thôn', 'Khu phố', 'Ấp', 'Tổ dân phố', 'Khóm', 'Bản', 'Làng', 'Buôn', 'Sóc', 'Plei', 'Xóm', 'Đội'];
   // Loại đơn vị hành chính cấp Tỉnh (dùng ở "Thông tin cơ bản bắt buộc" — màn hình thiết lập ban đầu / Cài đặt)
   const PROVINCE_TYPE_OPTIONS = ['Tỉnh', 'Thành phố'];
   // Mốc 4 Quý mặc định — CHỈ ngày/tháng (không năm), áp dụng lặp lại cho MỌI năm quá khứ/hiện tại/
@@ -1797,7 +1797,8 @@
   function hamletFilterLabel(hamlets){
     ensureFilterHamletsInit(hamlets);
     const sel = state.filterHamlets;
-    if(sel.length===0 || sel.length===hamlets.length) return `Tất cả địa phương`;
+    if(sel.length===hamlets.length && hamlets.length>0) return `Tất cả địa phương`;
+    if(sel.length===0) return `0 địa phương`;
     if(sel.length===1) return `${subAdminLabel()} ${sel[0]}`;
     return `${sel.length} địa phương được chọn`;
   }
@@ -1813,9 +1814,10 @@
   function projectFilterLabel(projects){
     ensureFilterProjectsInit(projects);
     const sel = state.filterProjectIds;
-    if(sel.length===0 || sel.length===projects.length) return 'Tất cả phương án vay';
+    if(sel.length===projects.length && projects.length>0) return 'Tất cả phương án vay';
+    if(sel.length===0) return '0 phương án';
     if(sel.length===1){ const p = projects.find(x=>x.id===sel[0]); return p ? escapeHtml(p.name) : '1 lựa chọn'; }
-    return `${sel.length} lựa chọn`;
+    return `${sel.length} phương án được chọn`;
   }
   function toggleProjectAll(projects, checked){ state.filterProjectIds = checked ? projects.map(p=>p.id) : []; }
   function toggleProjectOne(projects, id, checked){
@@ -1833,9 +1835,10 @@
   function fundSourceFilterLabel(sources){
     ensureFilterFundSourcesInit(sources);
     const sel = state.filterFundSources;
-    if(sel.length===0 || sel.length===sources.length) return 'Tất cả nguồn vay';
+    if(sel.length===sources.length && sources.length>0) return 'Tất cả nguồn vay';
+    if(sel.length===0) return '0 nguồn vay';
     if(sel.length===1) return sel[0];
-    return `${sel.length} nguồn vay được chọn`;
+    return `${sel.length} nguồn vay`;
   }
   function toggleFundSourceAll(sources, checked){ state.filterFundSources = checked ? sources.slice() : []; }
   function toggleFundSourceOne(sources, name, checked){
@@ -1850,9 +1853,10 @@
   function managerFilterLabel(managers){
     ensureFilterManagersInit(managers);
     const sel = state.filterManagerIds;
-    if(sel.length===0 || sel.length===managers.length) return 'Tất cả người quản lý';
+    if(sel.length===managers.length && managers.length>0) return 'Tất cả người quản lý';
+    if(sel.length===0) return '0 người quản lý';
     if(sel.length===1){ const m=managers.find(x=>x.id===sel[0]); return m? m.name : '1 lựa chọn'; }
-    return `${sel.length} lựa chọn`;
+    return `${sel.length} người quản lý`;
   }
   function toggleManagerAll(managers, checked){ state.filterManagerIds = checked ? managers.map(m=>m.id) : []; }
   function toggleManagerOne(managers, id, checked){
@@ -2173,6 +2177,14 @@
     const startRange = resolveQuarterDatesForYear(startInfo.qk, startInfo.year);
     const endRange = resolveQuarterDatesForYear(endInfo.qk, endInfo.year);
     return { from: startRange.from, to: endRange.to };
+  }
+  // Dòng chú thích "Đang được tính từ ngày...đến ngày... (X ngày) theo bộ lọc quý và năm" — dùng
+  // chung cho Danh sách người vay, Tính tiền lãi và phê duyệt đóng lãi, Gia hạn nợ.
+  function quarterYearFilterCaptionHtml(){
+    const r = selectedQuarterYearRange();
+    if(!r.from || !r.to) return '';
+    const days = Math.max(0, daysBetween(r.from, r.to));
+    return `<p class="sub" style="margin:6px 0 0;">Đang được tính từ ngày ${fmtDate(r.from)} đến ngày ${fmtDate(r.to)} (${days} ngày) theo bộ lọc quý và năm</p>`;
   }
   // Yêu cầu mới: cặp cột "Tính lãi từ ngày"/"đến ngày" LUÔN hiển thị đúng Quý HIỆN TẠI THẬT (theo
   // hôm nay) — KHÔNG còn bị ảnh hưởng bởi bộ lọc Quý/Năm nữa (bộ lọc giờ chỉ dùng để ẩn/hiện theo
@@ -2758,12 +2770,13 @@
   // "DANH SÁCH ĐỊA BÀN DÂN CƯ" — thay thế hẳn cơ chế nút "Khác" cũ. Thuộc bộ nhớ chung xã/phường
   // (chính là state.config.hamlets). Không cho lưu nếu còn ô nào để trống.
   // =====================================================================
-  function renderHamletManagerModal(onSaved){
+  function renderHamletManagerModal(onSaved, localList){
+    const isLocal = localList !== undefined;
     const wrap = document.createElement('div');
     wrap.className = 'modal-bg';
     document.body.appendChild(wrap);
     const close = ()=> wrap.remove();
-    let items = (state.config.hamlets||[]).slice();
+    let items = (isLocal ? localList : (state.config.hamlets||[])).slice();
 
     function render(){
       wrap.innerHTML = `
@@ -2812,7 +2825,18 @@
       if(saveBtn) saveBtn.onclick = async ()=>{
         if(items.some(n=> !n || !n.trim())){ alert('Không thể lưu khi còn ô địa bàn dân cư để trống — vui lòng điền đầy đủ hoặc xoá ô trống đó.'); return; }
         const clean = items.map(n=>n.trim());
-        const newCfg = {...state.config, hamlets: clean};
+        if(isLocal){
+          close();
+          if(onSaved) onSaved(clean);
+          return;
+        }
+        // Tự động đồng bộ "Địa chỉ trước sáp nhập": mỗi địa danh MỚI vừa được thêm (chưa từng có
+        // trước đó) sẽ tự có thêm 1 mục "Tên (cũ)" tương ứng.
+        const oldHamlets = new Set(state.config.hamlets||[]);
+        const newlyAdded = clean.filter(h=> !oldHamlets.has(h));
+        const legacy = (state.config.hamletsLegacyHidden||[]).slice();
+        newlyAdded.forEach(h=>{ const full = `${h} (cũ)`; if(!legacy.includes(full)) legacy.push(full); });
+        const newCfg = {...state.config, hamlets: clean, hamletsLegacyHidden: legacy};
         await cSet('config', newCfg);
         state.config = newCfg;
         close();
@@ -2969,32 +2993,52 @@
     render();
   }
   // Khối "Phân loại biên lai" (nhãn + nút i + dropdown) — dùng chung cho cả 4 loại biên lai.
-  function receiptCategoryFieldHtml(kind, idPrefix){
+  function receiptCategoryFieldHtml(kind, idPrefix, selectedId){
     const list = kind==='payment' ? (state.receiptCategoriesPayment||[]) : (state.receiptCategoriesRefund||[]);
+    const current = list.find(c=>c.id===selectedId);
+    const isOpen = state.openFilterDropdown === (idPrefix+'-cat');
+    const swatch = (color)=> `<span style="display:inline-block; width:14px; height:14px; border-radius:3px; background:${escapeHtml(color||'#999')}; border:1px solid rgba(0,0,0,.15);"></span>`;
     return `
       <div class="field" style="margin-top:14px;">
         <label style="display:flex; align-items:center; gap:4px;"><button type="button" class="qbox-info-btn" id="${idPrefix}-cat-info" style="width:20px; height:20px; font-size:11px; border-radius:50%;">i</button> Phân loại biên lai</label>
         <div id="${idPrefix}-cat-tip" style="display:none; background:var(--paper-2); border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:12px; margin:4px 0;">Vì Biên lai không thể xóa vĩnh viễn hoặc thay đổi thông tin bên trong, nên việc phân loại biên lai giúp cho quản lý biên lai, tìm kiếm biên lai dễ dàng hơn. Sau này vẫn có thể thay đổi "tên phân loại" cho mỗi biên lai.</div>
-        <select id="${idPrefix}-cat-select" class="preview-allow">
-          <option value="">Không phân loại</option>
-          ${list.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
-          <option value="__add__">+ Thêm tên phân loại mới...</option>
-        </select>
+        <div class="sv-filter-dropdown" style="width:100%;">
+          <button type="button" class="btn btn-ghost btn-sm preview-allow" id="${idPrefix}-cat-btn" style="display:flex; align-items:center; justify-content:space-between; width:100%; box-sizing:border-box;">
+            <span style="display:flex; align-items:center; gap:6px;">${current? swatch(current.color) : ''}${escapeHtml(current? current.name : 'Không phân loại')}</span>
+            <span>▾</span>
+          </button>
+          ${isOpen? `<div class="sv-filter-panel" style="min-width:100%;">
+            <label class="sv-filter-item" data-cat-pick="" style="display:flex; justify-content:space-between; cursor:pointer;"><span>Không phân loại</span></label>
+            ${list.map(c=>`<label class="sv-filter-item" data-cat-pick="${c.id}" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;"><span>${escapeHtml(c.name)}</span>${swatch(c.color)}</label>`).join('')}
+            <div class="sv-filter-divider"></div>
+            <label class="sv-filter-item" data-cat-add="1" style="cursor:pointer; font-weight:700;"><span>+ Thêm tên phân loại mới...</span></label>
+          </div>` : ''}
+        </div>
       </div>`;
   }
-  function wireReceiptCategoryField(wrap, kind, idPrefix, rerenderFn){
+  function wireReceiptCategoryField(wrap, kind, idPrefix, rerenderFn, onPick){
     const infoBtn = wrap.querySelector(`#${idPrefix}-cat-info`);
     const tip = wrap.querySelector(`#${idPrefix}-cat-tip`);
     if(infoBtn) infoBtn.onclick = (e)=>{ e.stopPropagation(); tip.style.display = tip.style.display==='none'?'block':'none'; };
-    const sel = wrap.querySelector(`#${idPrefix}-cat-select`);
-    if(sel) sel.onchange = ()=>{
-      if(sel.value==='__add__'){
-        const prev = sel.dataset.prev||'';
-        renderReceiptCategoryManagerModal(kind, ()=>{ if(rerenderFn) rerenderFn(); });
-        sel.value = prev;
-        return;
-      }
-      sel.dataset.prev = sel.value;
+    const btn = wrap.querySelector(`#${idPrefix}-cat-btn`);
+    if(btn) btn.onclick = (e)=>{
+      e.stopPropagation();
+      state.openFilterDropdown = state.openFilterDropdown===(idPrefix+'-cat') ? null : (idPrefix+'-cat');
+      if(rerenderFn) rerenderFn();
+    };
+    wrap.querySelectorAll('[data-cat-pick]').forEach(el=>{
+      el.onclick = (e)=>{
+        e.stopPropagation();
+        state.openFilterDropdown = null;
+        if(onPick) onPick(el.dataset.catPick);
+        if(rerenderFn) rerenderFn();
+      };
+    });
+    const addEl = wrap.querySelector('[data-cat-add]');
+    if(addEl) addEl.onclick = (e)=>{
+      e.stopPropagation();
+      state.openFilterDropdown = null;
+      renderReceiptCategoryManagerModal(kind, ()=>{ if(rerenderFn) rerenderFn(); });
     };
   }
   // Khối "Thông tin nâng cao" (đóng/mở, tự cuộn xuống khi mở) — dùng chung cho cả 4 loại biên lai.
@@ -3176,12 +3220,7 @@
   // Cấp cơ sở trực thuộc: "Ấp"/"Khu phố"/"Thôn"/... hoặc tên tự điền khi chọn "Khác"
   function subAdminLabel(){
     const cfg = state.config||{};
-    const t = SUB_ADMIN_OPTIONS.includes(cfg.subAdminType) ? cfg.subAdminType : 'Ấp';
-    if(t === 'Khác'){
-      const custom = (cfg.subAdminCustom||'').trim();
-      return custom || 'Khu dân cư';
-    }
-    return t;
+    return SUB_ADMIN_OPTIONS.includes(cfg.subAdminType) ? cfg.subAdminType : 'Khu dân cư';
   }
   function subAdminLabelLower(){ return subAdminLabel().toLowerCase(); }
   // "Xã Hưng Phước" / "Phường Bình Minh"
@@ -3520,7 +3559,7 @@
   function buildDemoState(){
     return {
       config: {
-        wardName:'Bình Minh (Bản xem trước)', adminLevel:'Xã', subAdminType:'Ấp', subAdminCustom:'',
+        wardName:'Bình Minh (Bản xem trước)', adminLevel:'Xã', subAdminType:'Ấp',
         provinceType:'Tỉnh', provinceName:'Bình Phước (Bản xem trước)',
         officerTitle:'Chủ tịch Hội Nông dân', ownerEmail:'demo@example.com',
         hamlets:['Ấp 1','Ấp 2','Ấp 3'], projects:['Phương án vay chăn nuôi bò','Phương án vay trồng rau sạch'],
@@ -5570,7 +5609,6 @@ ${fileGenerationTrainingText()}`;
           <h1>Xin chào, ${idn.name||idn.email}</h1>
           <p class="sub">Đã xác thực Google: <b>${idn.email}</b></p>
           <div class="field" style="text-align:left;"><label>Họ và tên *</label><input id="wc-name" value="${idn.name||''}"></div>
-          <div class="field" style="text-align:left;"><label>Chức vụ</label><input id="wc-title" placeholder="Chủ tịch Hội Nông dân, cán bộ..."></div>
 
           <div class="divider-lbl">Kết nối với mã định danh cấp xã</div>
           <div style="display:flex; flex-direction:column; gap:8px;">
@@ -5597,7 +5635,6 @@ ${fileGenerationTrainingText()}`;
       const nameVal = document.getElementById('wc-name').value.trim();
       if(!nameVal){ alert('Vui lòng nhập Họ và tên trước khi tiếp tục.'); document.getElementById('wc-name').focus(); return false; }
       state.identity.name = nameVal;
-      state.identity.title = document.getElementById('wc-title').value.trim();
       lset(IDENTITY_KEY, state.identity);
       lset(seenWelcomeKey(idn.email), true);
       return true;
@@ -5803,7 +5840,7 @@ ${fileGenerationTrainingText()}`;
 
   // Nhãn "Danh sách các ..." dùng ngay tại màn hình thiết lập lần đầu (trước khi state.config tồn tại)
   function subAdminListLabelLocal(subType, customVal){
-    const t = SUB_ADMIN_OPTIONS.includes(subType) ? subType : 'Ấp';
+    const t = SUB_ADMIN_OPTIONS.includes(subType) ? subType : 'Khu dân cư';
     const label = t==='Khác' ? ((customVal||'').trim()||'Đơn vị') : t;
     return `Danh sách các ${label.toLowerCase()}`;
   }
@@ -5817,11 +5854,15 @@ ${fileGenerationTrainingText()}`;
   // hoặc mặc định nếu bỏ trống) rồi vào thẳng giao diện chính.
   function renderOnboarding(){
     const cfg = state.config || { hamlets:[], projects:[], quarters: JSON.parse(JSON.stringify(DEFAULT_QUARTERS)),
-      retainPercent:30, wardName:'', adminLevel:'Xã', subAdminType:'Ấp', subAdminCustom:'', provinceType:'', provinceName:'',
+      retainPercent:30, wardName:'', adminLevel:'Xã', subAdminType:'Khu dân cư', provinceType:'', provinceName:'',
       ownerEmail: state.identity.email, officerTitle:'' };
     const curLevel = ADMIN_LEVEL_OPTIONS.includes(cfg.adminLevel) ? cfg.adminLevel : 'Xã';
-    const curSub = SUB_ADMIN_OPTIONS.includes(cfg.subAdminType) ? cfg.subAdminType : 'Ấp';
+    const curSub = SUB_ADMIN_OPTIONS.includes(cfg.subAdminType) ? cfg.subAdminType : 'Khu dân cư';
     const curProvinceType = PROVINCE_TYPE_OPTIONS.includes(cfg.provinceType) ? cfg.provinceType : 'Tỉnh';
+    // "state.config" chưa tồn tại khi đang thiết lập lần đầu -> danh sách địa danh nháp dùng tạm
+    // biến toàn cục ở state để khung dropdown + modal quản lý địa danh dùng chung được với nhau.
+    if(!state.config) state._obDraftHamlets = state._obDraftHamlets || (cfg.hamlets||[]).slice();
+    const obHamlets = state.config ? (state.config.hamlets||[]) : (state._obDraftHamlets||[]);
     root.innerHTML = `
       <div class="center-screen">
         <div class="auth-card" style="max-width:640px; text-align:left;">
@@ -5842,11 +5883,7 @@ ${fileGenerationTrainingText()}`;
             <div class="field"><label>Loại khu dân cư cấp dưới *</label>
               <select id="ob-subadmin">${SUB_ADMIN_OPTIONS.map(o=>`<option value="${o}" ${curSub===o?'selected':''}>${o}</option>`).join('')}</select>
             </div>
-            <div class="field" id="ob-subadmin-custom-wrap" style="${curSub==='Khác'?'':'display:none;'}">
-              <label>Tên gọi khác (tự điền) *</label>
-              <input id="ob-subadmin-custom" placeholder="Ví dụ: Buôn, Bản, Sóc..." value="${cfg.subAdminCustom||''}">
-            </div>
-            <div class="field"><label>Chức vụ cán bộ</label><input id="ob-title" placeholder="Chủ tịch Hội Nông dân... (có thể để trống)" value="${cfg.officerTitle||''}"></div>
+            <div class="field"><label>Chức vụ của đồng chí là gì <span class="sub">(có thể để trống)</span></label><input id="ob-title" placeholder="Chủ tịch Hội, Chi hội trưởng,..." value="${cfg.officerTitle||''}"></div>
           </div>
 
           <div class="field full" style="margin-top:4px;">
@@ -5859,16 +5896,17 @@ ${fileGenerationTrainingText()}`;
 
           <div style="border:1px dashed var(--gold); border-radius:12px; padding:14px 16px; margin-top:20px; background:rgba(199,154,43,.06);">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px;">
-              <b style="font-size:13.5px; color:var(--rice-dark);">⚙️ Thiết lập nâng cao</b>
+              <b style="font-size:13.5px; color:var(--rice-dark);" id="ob-hamlets-divider">📋 Danh sách tên địa danh các khu dân cư trực thuộc</b>
             </div>
             <p class="sub" style="margin:0 0 12px; font-size:11.5px;">💡 Có thể bỏ qua và thiết lập sau trong phần Cài đặt. Các mục dưới đây có thể để trống hoặc để mặc định.</p>
 
-            <div class="divider-lbl" id="ob-hamlets-divider">${subAdminListLabelLocal(curSub, cfg.subAdminCustom)}</div>
-            <div class="field"><textarea id="ob-hamlets" rows="2" placeholder="${curSub} 1, ${curSub} 2, ${curSub} 3...">${(cfg.hamlets||[]).join(', ')}</textarea></div>
-            <p class="sub" style="margin:-6px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p>
+            <div style="border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-height:38px; background:var(--white);">
+              ${obHamlets.length? escapeHtml(obHamlets.join(', ')) : `<span class="sub">Chưa có địa danh nào.</span>`}
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" id="ob-hamlets-manage-btn" style="margin-top:6px;">+ Thêm địa danh</button>
 
             <div style="display:flex; gap:10px; margin-top:14px;">
-              <button class="btn btn-ghost" id="ob-skip" style="flex:1;">Bỏ qua, thiết lập sau</button>
+              <button class="btn btn-ghost" id="ob-skip" style="flex:1;">Quay lại trang trước</button>
               <button class="btn btn-primary" id="ob-save" style="flex:1;">Lưu và tiếp tục</button>
             </div>
           </div>
@@ -5881,36 +5919,28 @@ ${fileGenerationTrainingText()}`;
     const anchorEl = document.getElementById('ob-required-anchor');
     if(anchorEl) setTimeout(()=> anchorEl.scrollIntoView({behavior:'smooth', block:'start'}), 60);
 
-    // ---- cập nhật động các nhãn/placeholder khi người dùng đổi cấu hình danh xưng ----
-    function currentSubLabel(){
-      const t = document.getElementById('ob-subadmin').value;
-      if(t==='Khác'){ const c=(document.getElementById('ob-subadmin-custom').value||'').trim(); return c || 'Đơn vị'; }
-      return t;
-    }
+    // ---- cập nhật động các nhãn khi người dùng đổi cấu hình danh xưng ----
     function refreshAdminLabels(){
       const level = document.getElementById('ob-adminlevel').value;
-      const sub = currentSubLabel();
-      document.getElementById('ob-subadmin-custom-wrap').style.display = document.getElementById('ob-subadmin').value==='Khác' ? '' : 'none';
       document.getElementById('ob-ward-label').textContent = `Tên riêng (${level}) *`;
-      document.getElementById('ob-hamlets-divider').textContent = `Danh sách các ${sub.toLowerCase()}`;
-      document.getElementById('ob-hamlets').placeholder = `${sub} 1, ${sub} 2, ${sub} 3...`;
     }
     document.getElementById('ob-adminlevel').onchange = refreshAdminLabels;
-    document.getElementById('ob-subadmin').onchange = refreshAdminLabels;
-    document.getElementById('ob-subadmin-custom').oninput = refreshAdminLabels;
+    const obHamletsManageBtn = document.getElementById('ob-hamlets-manage-btn');
+    if(obHamletsManageBtn) obHamletsManageBtn.onclick = ()=>{
+      renderHamletManagerModal((newList)=>{
+        state._obDraftHamlets = newList;
+        renderOnboarding();
+      }, state._obDraftHamlets||[]);
+    };
 
     // ---- Yêu cầu 3: kiểm tra đầy đủ "Thông tin cơ bản bắt buộc" trước khi được đi tiếp ----
-    // Dùng CHUNG cho cả 2 nút [Bỏ qua, thiết lập sau] / [Lưu và tiếp tục] — theo yêu cầu 4,
-    // cả 2 nút phải bắt buộc đủ thông tin cơ bản như nhau, chỉ phần "nâng cao" là được phép trống.
     function validateRequired(){
       const wardNameVal = document.getElementById('ob-ward').value.trim();
       const provinceNameVal = document.getElementById('ob-provincename').value.trim();
       const subAdminType = document.getElementById('ob-subadmin').value;
-      const subAdminCustom = document.getElementById('ob-subadmin-custom').value.trim();
       if(!wardNameVal){ alert(`Vui lòng nhập Tên riêng (${document.getElementById('ob-adminlevel').value}).`); document.getElementById('ob-ward').focus(); return null; }
       if(!provinceNameVal){ alert('Vui lòng nhập Tên tỉnh/thành phố.'); document.getElementById('ob-provincename').focus(); return null; }
-      if(subAdminType==='Khác' && !subAdminCustom){ alert('Vui lòng nhập tên gọi khác cho cấp cơ sở trực thuộc.'); document.getElementById('ob-subadmin-custom').focus(); return null; }
-      return { wardNameVal, provinceNameVal, subAdminType, subAdminCustom };
+      return { wardNameVal, provinceNameVal, subAdminType };
     }
 
     // ---- Yêu cầu 4: cả 2 nút cùng chung 1 kết quả — lưu dữ liệu bắt buộc + dữ liệu nâng cao
@@ -5923,9 +5953,9 @@ ${fileGenerationTrainingText()}`;
         adminLevel: document.getElementById('ob-adminlevel').value,
         provinceType: document.getElementById('ob-provincetype').value,
         provinceName: req.provinceNameVal,
-        subAdminType: req.subAdminType, subAdminCustom: req.subAdminCustom,
+        subAdminType: req.subAdminType,
         officerTitle: document.getElementById('ob-title').value.trim(),
-        hamlets: document.getElementById('ob-hamlets').value.split(',').map(s=>s.trim()).filter(Boolean),
+        hamlets: state._obDraftHamlets || [],
         projects: [], // Yêu cầu mới: bỏ hẳn danh sách phương án vay tự do — dùng hệ thống Phương án vay có cấu trúc ở Sổ vay vốn
         quarters: (state.config && state.config.quarters) ? state.config.quarters : JSON.parse(JSON.stringify(DEFAULT_QUARTERS)), // Yêu cầu mới: bỏ hẳn khối chỉnh 4 Quý ở màn thiết lập ban đầu — đã dời sang nút "Chỉnh thời gian tính lãi suất hàng quý" trong Sổ vay vốn
         retainPercent: (state.config && state.config.retainPercent!=null) ? state.config.retainPercent : 30, // không còn ô nhập — giữ mặc định để không ảnh hưởng công thức Báo cáo hiện có
@@ -5955,6 +5985,7 @@ ${fileGenerationTrainingText()}`;
       await rtdb.ref(`secret_ward_map/${newCfg.secretId}`).set(wardId());
       delete state._pendingAccessCode;
       delete state._pendingSecretId;
+      delete state._obDraftHamlets;
       // Cập nhật lại tên hiển thị của mã này trong Ví mã xã của Chủ mã
       await rtdb.ref(`users/${emailToKey(state.identity.email)}/wards/${wardId()}`).set({kind:'owner', wardName:req.wardNameVal, addedAt:new Date().toISOString()});
       state.view = 'app';
@@ -5963,8 +5994,24 @@ ${fileGenerationTrainingText()}`;
       render();
     }
 
+    // "Quay lại trang trước" — HUỶ BỎ hẳn mã định danh đang thiết lập dang dở (chưa từng lưu config
+    // thật lên Firebase nên không cần xoá gì trên đó), quay lại đúng màn hình nhập Họ và tên/tạo
+    // hoặc tham gia mã định danh, để người dùng có thể đổi ý.
+    async function cancelOnboarding(){
+      detachRealtime();
+      state.identity.wardId = '';
+      setActiveWardCache('');
+      lset(IDENTITY_KEY, state.identity);
+      state.config = null;
+      delete state._pendingAccessCode;
+      delete state._pendingSecretId;
+      delete state._obDraftHamlets;
+      state.view = 'welcome';
+      render();
+    }
+
     document.getElementById('ob-save').onclick = finishOnboarding;
-    document.getElementById('ob-skip').onclick = finishOnboarding;
+    document.getElementById('ob-skip').onclick = cancelOnboarding;
   }
 
   function navItems(){
@@ -7236,7 +7283,7 @@ ${fileGenerationTrainingText()}`;
               ${buildYearFilterDropdownHtml()}
               <button class="btn btn-ghost btn-sm preview-allow" id="extm-reset-all-btn">↺ Khôi phục bộ lọc gốc</button>
             </div>
-            <p class="sub" style="margin:10px 0; font-size:12.5px;">Thời gian đang được tính từ ${formatUnderlinedDMY(range.from)} đến ${formatUnderlinedDMY(range.to)}</p>
+            ${quarterYearFilterCaptionHtml()}
             ${statsHtml}
             ${tablesHtml}
             <div style="display:flex; gap:8px; margin-top:16px;">
@@ -7518,6 +7565,7 @@ ${fileGenerationTrainingText()}`;
     document.body.appendChild(wrap);
     const close = ()=> wrap.remove();
     const goBack = ()=>{ close(); renderRefundSelectionModal(b); };
+    let selectedCategoryId = '';
 
     function render(){
       const disp = computeInterestPaymentBoxDisplay(b);
@@ -7537,7 +7585,7 @@ ${fileGenerationTrainingText()}`;
             <div id="rfq-total-tip" style="display:none; background:var(--paper-2); border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:12px; margin:4px 0;">Đây là số tiền thực tế được trả lại</div>
             <p class="sub" style="margin-top:6px;">Số tiền này sẽ được trừ khỏi Tổng số tiền đã đóng lãi của hộ vay, các quý ở trên sẽ quay về trạng thái CHƯA đóng lãi.</p>
             ${receiptPayerFieldsHtmlRefund(b)}
-            ${receiptCategoryFieldHtml('refund','rfq')}
+            ${receiptCategoryFieldHtml('refund','rfq', selectedCategoryId)}
             ${advancedInfoHtml(b, chosen, 'rfq')}
           </div>
           <div class="modal-foot" style="justify-content:space-between;">
@@ -7552,7 +7600,7 @@ ${fileGenerationTrainingText()}`;
       wrap.querySelector('#rfq-cancel').onclick = close;
       wrap.querySelector('#rfq-back').onclick = goBack;
       wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
-      wireReceiptCategoryField(wrap, 'refund', 'rfq', render);
+      wireReceiptCategoryField(wrap, 'refund', 'rfq', render, (id)=>{ selectedCategoryId = id; });
       wireAdvancedInfo(wrap, 'rfq');
       const totalInfoBtn = wrap.querySelector('#rfq-total-info');
       const totalTip = wrap.querySelector('#rfq-total-tip');
@@ -7586,6 +7634,7 @@ ${fileGenerationTrainingText()}`;
     let amount = 0;
     let lastChosen = [], lastRefundAmount = 0, lastMaxAllowed = 0;
     let advInfoOpen = false;
+    let selectedCategoryId = '';
 
     function renderShell(){
       wrap.innerHTML = `
@@ -7601,7 +7650,7 @@ ${fileGenerationTrainingText()}`;
             <div class="rcpt-reset-wrap"><input id="rfm-total" class="preview-allow" style="text-align:center;" placeholder="sửa" value=""><button type="button" class="rcpt-reset-btn preview-allow" id="rfm-total-reset">↺</button><div class="rcpt-reset-tip">trở về trạng thái trống ban đầu</div></div>
             <div id="rfm-results"></div>
             ${receiptPayerFieldsHtmlRefund(b)}
-            ${receiptCategoryFieldHtml('refund','rfm')}
+            ${receiptCategoryFieldHtml('refund','rfm', selectedCategoryId)}
             <div id="rfm-advinfo"></div>
           </div>
           <div class="modal-foot" style="justify-content:space-between;">
@@ -7646,7 +7695,7 @@ ${fileGenerationTrainingText()}`;
       wrap.querySelector('#rfm-cancel').onclick = close;
       wrap.querySelector('#rfm-back').onclick = goBack;
       wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
-      wireReceiptCategoryField(wrap, 'refund', 'rfm', renderShell);
+      wireReceiptCategoryField(wrap, 'refund', 'rfm', renderShell, (id)=>{ selectedCategoryId = id; });
       const totalInfoBtn = wrap.querySelector('#rfm-total-info');
       const totalTip = wrap.querySelector('#rfm-total-tip');
       if(totalInfoBtn) totalInfoBtn.onclick = (e)=>{ e.stopPropagation(); totalTip.style.display = totalTip.style.display==='none'?'block':'none'; };
@@ -7733,6 +7782,7 @@ ${fileGenerationTrainingText()}`;
     const selectedKeys = new Set();
     let receiptSurplus = 0, receiptShortfall = 0;
     let usePrevLeftover = false; // "Bổ sung: Tiền dư từ đợt trước" đang bật hay tắt
+    let selectedCategoryId = '';
     let autoLockedKey = null; // key của Quý (quá khứ+hiện tại) DUY NHẤT, tự chọn sẵn và không cho bỏ
 
     function renderBody(){
@@ -7843,7 +7893,7 @@ ${fileGenerationTrainingText()}`;
               <p class="sub" id="rcpt-explain" style="margin-top:6px;">${escapeHtml(buildReceiptExplanation(computeReceiptSettlementPreview(b, chosen, finalAmount, disp), chosenSum, finalAmount))}</p>
               <p class="sub" id="rcpt-error" style="color:var(--red); font-weight:700; display:none; margin-top:6px;"></p>
               ${receiptPayerFieldsHtml(b)}
-              ${receiptCategoryFieldHtml('payment','rcpt')}
+              ${receiptCategoryFieldHtml('payment','rcpt', selectedCategoryId)}
               ${advancedInfoHtml(b, (()=>{ const r=computeReceiptSettlementPreview(b, chosen, finalAmount, disp); return r.paidQuarters.concat(r.extraPaidQuarters); })(), 'rcpt')}
             </div>
             <div class="modal-foot" style="justify-content:space-between;">
@@ -7934,7 +7984,7 @@ ${fileGenerationTrainingText()}`;
       wrap.querySelector('#rcpt-close').onclick = close;
       wrap.querySelector('#rcpt-cancel').onclick = close;
       const backBtn = wrap.querySelector('#rcpt-back');
-      wireReceiptCategoryField(wrap, 'payment', 'rcpt', renderBody);
+      wireReceiptCategoryField(wrap, 'payment', 'rcpt', renderBody, (id)=>{ selectedCategoryId = id; });
       wireAdvancedInfo(wrap, 'rcpt');
       if(backBtn) backBtn.onclick = ()=>{ mode='select'; renderBody(); };
       wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
@@ -8092,6 +8142,7 @@ ${fileGenerationTrainingText()}`;
     let receiptSurplus = 0, receiptShortfall = 0;
     let usePrevLeftover = false;
     let advInfoOpen = false;
+    let selectedCategoryId = '';
 
     // ---- KHUNG VỎ (chứa ô nhập "Tổng tất cả") — CHỈ dựng đúng 1 lần khi mở modal, hoặc khi bấm nút
     // reset/bổ sung tiền dư (không dựng lại khi đang gõ) — để tuyệt đối không đụng vào input đang
@@ -8117,7 +8168,7 @@ ${fileGenerationTrainingText()}`;
             <div id="mrcpt-prevleftover-line"></div>
             <div id="mrcpt-results"></div>
             ${receiptPayerFieldsHtml(b)}
-            ${receiptCategoryFieldHtml('payment','mrcpt')}
+            ${receiptCategoryFieldHtml('payment','mrcpt', selectedCategoryId)}
             <div id="mrcpt-advinfo"></div>
           </div>
           <div class="modal-foot" style="justify-content:space-between;">
@@ -8177,7 +8228,7 @@ ${fileGenerationTrainingText()}`;
       wrap.querySelector('#mrcpt-cancel').onclick = close;
       wrap.querySelector('#mrcpt-back').onclick = goBack;
       wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
-      wireReceiptCategoryField(wrap, 'payment', 'mrcpt', renderShell);
+      wireReceiptCategoryField(wrap, 'payment', 'mrcpt', renderShell, (id)=>{ selectedCategoryId = id; });
       const totalInput = wrap.querySelector('#mrcpt-total');
       totalInput.addEventListener('focus', ()=>{ totalInput.value=''; });
       totalInput.addEventListener('input', ()=>{
@@ -8309,6 +8360,7 @@ ${fileGenerationTrainingText()}`;
             </div>
             ${pickerHtml}
             ${actionButtonsHtml}
+            ${quarterYearFilterCaptionHtml()}
             <div id="ia-table-area">${renderIAGroupedTablesHtml(list, visibleCols, projects)}</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:16px;">
               <button class="btn btn-primary preview-allow" id="ia-save-btn-bottom">💾 Lưu (phê duyệt thành công)</button>
@@ -8511,6 +8563,7 @@ ${fileGenerationTrainingText()}`;
             <button class="btn btn-ghost btn-sm preview-allow" id="exp-excel-btn">⬇️ Xuất Excel</button>
             <button class="btn btn-ghost btn-sm preview-allow" id="print-btn">🖨️ In</button>
           </div>
+          ${quarterYearFilterCaptionHtml()}
 
           ${state.showColumnPicker? (()=>{
             const pickerOrder = state.borrowerColPickerDraftOrder || colOrder;
@@ -11256,7 +11309,24 @@ CHỈ trả lời bằng ĐÚNG 1 khối JSON hợp lệ, không thêm bất k�
     el.innerHTML = `
       ${state.identity.email? `
       <div class="panel"><div class="panel-head"><h3>🗂️ Ví mã định danh cấp Xã/Phường của tôi</h3></div>
-        <div class="panel-body" id="wallet-embed-mount"></div>
+        <div class="panel-body">
+          <div id="st-wards-list" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+            ${(state.myWards||[]).map(w=>{
+              const active = w.wardId===wardId();
+              return `<button class="btn ${active?'btn-primary':'btn-ghost'} btn-sm preview-allow" data-st-enter-ward="${w.wardId}" ${active?'disabled':''} title="${w.kind==='owner'?'Chủ mã':'Khách'}">${w.kind==='owner'?'👑':'👤'} ${escapeHtml(w.wardName||w.wardId)}${active?' (đang dùng)':''}</button>`;
+            }).join('')}
+          </div>
+          <button class="btn btn-primary" id="st-goto-wallet-btn">🗂️ Tạo mới, sửa, xoá, quản lý mã định danh</button>
+          <div style="background:rgba(47,74,60,.06); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-top:14px;">
+            <b style="font-size:13px; color:var(--rice-dark);">💡 Mã định danh cấp Xã/Phường là gì?</b>
+            <p class="sub" style="margin:6px 0 0; font-size:11.5px; line-height:1.6;">
+              Đây là "chìa khoá" để kết nối dữ liệu chung của một địa phương trên đám mây. Ai <b>tạo mã mới</b> (mã chưa từng tồn tại)
+              sẽ trở thành <b>CHỦ MÃ</b> — người duy nhất có toàn quyền cấu hình và cấp quyền Xem/Sửa cho người khác. Ai
+              <b>tham gia bằng mã đã có</b> (đúng mã + mật khẩu, nếu có) sẽ là <b>KHÁCH</b> — chỉ thao tác trong phạm vi được Chủ mã cho phép.
+              Một tài khoản Google có thể sở hữu/tham gia <b>nhiều mã</b> cùng lúc và chuyển qua lại thoải mái ở Ví mã xã này.
+            </p>
+          </div>
+        </div>
       </div>` : ''}
 
       <div class="panel"><div class="panel-head"><h3>Thông tin địa phương</h3></div>
@@ -11271,18 +11341,18 @@ CHỈ trả lời bằng ĐÚNG 1 khối JSON hợp lệ, không thêm bất k�
               <select id="st-provincetype" ${canEditCore?'':'disabled'}>${PROVINCE_TYPE_OPTIONS.map(o=>`<option value="${o}" ${(PROVINCE_TYPE_OPTIONS.includes(cfg.provinceType)?cfg.provinceType:'Tỉnh')===o?'selected':''}>${o}</option>`).join('')}</select>
             </div>
             <div class="field"><label>Tên tỉnh/thành phố *</label><input id="st-provincename" value="${cfg.provinceName||''}" ${canEditCore?'':'disabled'}></div>
-            <div class="field"><label>Cấp cơ sở trực thuộc *</label>
-              <select id="st-subadmin" ${canEditCore?'':'disabled'}>${SUB_ADMIN_OPTIONS.map(o=>`<option value="${o}" ${(SUB_ADMIN_OPTIONS.includes(cfg.subAdminType)?cfg.subAdminType:'Ấp')===o?'selected':''}>${o}</option>`).join('')}</select>
-            </div>
-            <div class="field" id="st-subadmin-custom-wrap" style="${cfg.subAdminType==='Khác'?'':'display:none;'}">
-              <label>Tên gọi khác (tự điền) *</label>
-              <input id="st-subadmin-custom" value="${cfg.subAdminCustom||''}" ${canEditCore?'':'disabled'}>
+            <div class="field"><label>Loại hình khu dân cư trực thuộc *</label>
+              <select id="st-subadmin" ${canEditCore?'':'disabled'}>${SUB_ADMIN_OPTIONS.map(o=>`<option value="${o}" ${(SUB_ADMIN_OPTIONS.includes(cfg.subAdminType)?cfg.subAdminType:'Khu dân cư')===o?'selected':''}>${o}</option>`).join('')}</select>
             </div>
           </div>
           <div class="divider-lbl">Thông tin chung</div>
           <div class="form-grid">
-            <div class="field full"><label id="st-hamlets-label">${subAdminListLabel()}</label><textarea id="st-hamlets" rows="2" ${canEditCore?'':'disabled'}>${(cfg.hamlets||[]).join(', ')}</textarea>
-              <p class="sub" style="margin:4px 0 0; font-size:11.5px;">Nhập cách nhau bởi dấu phẩy, hãy thêm dấu phẩy vào ạ</p></div>
+            <div class="field full"><label id="st-hamlets-label">${subAdminListLabel()}</label>
+              <div style="border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-height:38px; background:var(--white);">
+                ${(cfg.hamlets||[]).length? escapeHtml((cfg.hamlets||[]).join(', ')) : `<span class="sub">Chưa có địa danh nào.</span>`}
+              </div>
+              <button type="button" class="btn btn-ghost btn-sm" id="st-hamlets-manage-btn" style="margin-top:6px;">+ Thêm địa danh</button>
+            </div>
           </div>
           <p class="sub">💡 Mốc 4 Quý để tính lãi suất giờ được chỉnh riêng ở Module "Sổ vay vốn" — bấm nút "Chỉnh thời gian tính lãi suất hàng quý".</p>
           ${canEditCore? `<button class="btn btn-primary" id="st-save" style="margin-top:16px;">Lưu thay đổi</button>` : `<p class="sub" style="margin-top:12px;">Bạn chỉ được cấp quyền XEM cấu hình này — chỉ Chủ mã (hoặc người được Chủ mã cấp quyền Sửa "Cài đặt của mã định danh") mới lưu được thay đổi.</p>`}
@@ -11389,13 +11459,25 @@ CHỈ trả lời bằng ĐÚNG 1 khối JSON hợp lệ, không thêm bất k�
         </div>
       </div>` : ''}`;
 
+    const gotoWalletBtn2 = document.getElementById('st-goto-wallet-btn');
+    if(gotoWalletBtn2) gotoWalletBtn2.onclick = exitToWallet;
+    function wireWardListButtons(){
+      el.querySelectorAll('[data-st-enter-ward]').forEach(btn=>{
+        btn.onclick = ()=> enterWard(btn.dataset.stEnterWard);
+      });
+    }
+    wireWardListButtons();
     if(state.identity.email){
-      renderWardWalletPanel(document.getElementById('wallet-embed-mount'), {embedded:true});
-      // Yêu cầu 3: luôn cập nhật lại Ví mã xã (kể cả Thùng rác chứa mã) mỗi khi mở Tab Cài đặt,
-      // bất kể đang đứng ở mã nào (kể cả đang sài ké mã của người khác).
+      // Luôn làm mới danh sách mã định danh (chủ/khách) mỗi khi mở tab Cài đặt — CHỈ cập nhật đúng
+      // phần danh sách này (không vẽ lại cả tab) để tránh gọi loadWallet() lặp vô hạn.
       loadWallet().then(()=>{
-        const mount = document.getElementById('wallet-embed-mount');
-        if(mount && state.activeTab==='settings') renderWardWalletPanel(mount, {embedded:true});
+        const listEl = document.getElementById('st-wards-list');
+        if(!listEl || state.activeTab!=='settings') return;
+        listEl.innerHTML = (state.myWards||[]).map(w=>{
+          const active = w.wardId===wardId();
+          return `<button class="btn ${active?'btn-primary':'btn-ghost'} btn-sm preview-allow" data-st-enter-ward="${w.wardId}" ${active?'disabled':''} title="${w.kind==='owner'?'Chủ mã':'Khách'}">${w.kind==='owner'?'👑':'👤'} ${escapeHtml(w.wardName||w.wardId)}${active?' (đang dùng)':''}</button>`;
+        }).join('');
+        wireWardListButtons();
       });
     }
 
@@ -11426,37 +11508,31 @@ CHỈ trả lời bằng ĐÚNG 1 khối JSON hợp lệ, không thêm bất k�
 
     // ---- cập nhật động các nhãn khi đổi cấu hình danh xưng (chưa lưu) ----
     function currentSubLabelSt(){
-      const t = document.getElementById('st-subadmin').value;
-      if(t==='Khác'){ const c=(document.getElementById('st-subadmin-custom').value||'').trim(); return c || 'Đơn vị'; }
-      return t;
+      return document.getElementById('st-subadmin').value;
     }
     function refreshAdminLabelsSt(){
       const level = document.getElementById('st-adminlevel').value;
       const sub = currentSubLabelSt();
-      document.getElementById('st-subadmin-custom-wrap').style.display = document.getElementById('st-subadmin').value==='Khác' ? '' : 'none';
       document.getElementById('st-ward-label').textContent = `Tên riêng (${level})`;
       document.getElementById('st-hamlets-label').textContent = `Danh sách các ${sub.toLowerCase()}`;
     }
     document.getElementById('st-adminlevel').onchange = refreshAdminLabelsSt;
     document.getElementById('st-subadmin').onchange = refreshAdminLabelsSt;
-    document.getElementById('st-subadmin-custom').oninput = refreshAdminLabelsSt;
+    const stHamletsManageBtn = document.getElementById('st-hamlets-manage-btn');
+    if(stHamletsManageBtn) stHamletsManageBtn.onclick = ()=> renderHamletManagerModal(()=> renderSettingsTab(el));
 
     const stSaveBtn = document.getElementById('st-save');
     if(stSaveBtn) stSaveBtn.onclick = async ()=>{
       const subAdminType = document.getElementById('st-subadmin').value;
-      const subAdminCustom = document.getElementById('st-subadmin-custom').value.trim();
       const wardNameVal = document.getElementById('st-ward').value.trim();
       const provinceNameVal = document.getElementById('st-provincename').value.trim();
       if(!wardNameVal){ alert(`Vui lòng nhập Tên riêng (${document.getElementById('st-adminlevel').value}).`); return; }
       if(!provinceNameVal){ alert('Vui lòng nhập Tên tỉnh/thành phố.'); return; }
-      if(subAdminType==='Khác' && !subAdminCustom){ alert('Vui lòng nhập tên gọi khác cho cấp cơ sở trực thuộc.'); return; }
       cfg.wardName = wardNameVal;
       cfg.adminLevel = document.getElementById('st-adminlevel').value;
       cfg.provinceType = document.getElementById('st-provincetype').value;
       cfg.provinceName = provinceNameVal;
       cfg.subAdminType = subAdminType;
-      cfg.subAdminCustom = subAdminCustom;
-      cfg.hamlets = document.getElementById('st-hamlets').value.split(',').map(s=>s.trim()).filter(Boolean);
       await cSet('config', cfg);
       await pushLog('cập nhật', 'cấu hình hệ thống');
       renderSettingsTab(el);
@@ -11551,7 +11627,9 @@ CHỈ trả lời bằng ĐÚNG 1 khối JSON hợp lệ, không thêm bất k�
               </select>
             </div>
             <div class="field"><label>Số tiền thực tế vay (đ) * <span class="sub">(tối đa 12 số)</span> <span class="sub" id="m-principal-disp" style="font-weight:700; color:var(--rice-dark);"></span></label><input type="text" inputmode="numeric" id="m-principal" value="${b.principal||''}" placeholder="Chỉ nhập số" ${readonly?'disabled':''}></div>
-            <div class="field"><label>Người quản lý hộ vay</label><select id="m-manager" ${readonly?'disabled':''}>
+            <div class="field"><label style="display:flex; align-items:center; gap:4px;"><button type="button" class="qbox-info-btn" id="m-manager-info" style="width:20px; height:20px; font-size:11px; border-radius:50%;">i</button> Người quản lý hộ vay</label>
+              <div id="m-manager-tip" style="display:none; background:var(--paper-2); border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:12px; margin:4px 0;">Đây là danh sách những người thuộc hệ thống chi hội Ấp (hoặc đại diện Xã/Phường) phụ trách quản lý các hộ vay. Việc thiết lập sẵn danh sách này giúp sau này dễ dàng tra cứu người quản lý của từng hộ, cũng như tự động tính đúng số tiền lãi được phân bổ về cho từng người quản lý.</div>
+              <select id="m-manager" ${readonly?'disabled':''}>
               ${ensureDefaultManagers().map(m=>`<option value="${m.id}" ${(b.managerId||'chihoitruong')===m.id?'selected':''}>${escapeHtml(m.name)}</option>`).join('')}
               <option value="__add__">+ Thêm người quản lý...</option>
             </select></div>
@@ -11650,6 +11728,9 @@ CHỈ trả lời bằng ĐÚNG 1 khối JSON hợp lệ, không thêm bất k�
       updatePDisp();
     })();
     (function(){
+      const mgrInfoBtn = wrap.querySelector('#m-manager-info');
+      const mgrTip = wrap.querySelector('#m-manager-tip');
+      if(mgrInfoBtn) mgrInfoBtn.onclick = (e)=>{ e.stopPropagation(); mgrTip.style.display = mgrTip.style.display==='none'?'block':'none'; };
       const mgrSel = wrap.querySelector('#m-manager');
       if(mgrSel) mgrSel.onchange = ()=>{
         if(mgrSel.value==='__add__'){
