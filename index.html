@@ -6921,7 +6921,18 @@ ${fileGenerationTrainingText()}`;
       { key:'extensionHistory', label:'Các lần gia hạn', advanced:true, get:b=> getBorrowerExtensions(b.id).map((e,i)=>`Lần ${i+1} (hạn ${fmtDate(e.to)})`).join(', ') },
       { key:'overdueRateApplied', label:'Lãi suất quá hạn<br>đang áp dụng', advanced:true, get:b=>{ const e = latestBorrowerExtension(b.id); return e? `${String(e.ratePct).replace('.',',')}%/năm` : ''; } },
       { key:'latestExtensionDueDate', label:'Ngày gia hạn<br>gần nhất', advanced:true, get:b=>{ const e = latestBorrowerExtension(b.id); return e? 'hạn '+fmtDate(e.to) : ''; } },
-      { key:'daysRemaining', label:'Thời gian còn lại', advanced:true, get:b=>{ const proj = projectOf(b); const dueRef = proj? proj.dueDate : b.dueDate; return daysRemainingLabel(dueRef); } },
+      { key:'daysRemaining', label:'Thời gian còn lại', advanced:true, get:b=>{
+        const exts = getBorrowerExtensions(b.id);
+        const proj = projectOf(b);
+        const dueRef = exts.length? exts[exts.length-1].to : (proj? proj.dueDate : b.dueDate);
+        const lbl = daysRemainingLabel(dueRef);
+        return exts.length? `<span style="color:#b71c1c; font-weight:700;">${lbl}</span>` : lbl;
+      }, getPlain:b=>{
+        const exts = getBorrowerExtensions(b.id);
+        const proj = projectOf(b);
+        const dueRef = exts.length? exts[exts.length-1].to : (proj? proj.dueDate : b.dueDate);
+        return daysRemainingLabel(dueRef);
+      } },
       { key:'birthYear', label:'Năm sinh', advanced:true, get:b=> b.birthYear||'' },
       { key:'cccd', label:'Số CCCD', advanced:true, get:b=> b.cccd? groupDigitsRight(String(b.cccd),4) : '' },
       { key:'phone', label:'Số điện thoại', advanced:true, get:b=> b.phone? groupDigitsRight(String(b.phone).replace(/[^\d]/g,''),3) : '' },
@@ -7198,13 +7209,15 @@ ${fileGenerationTrainingText()}`;
   }
   // Màu nền cả dòng theo mức khẩn cấp của "Thời gian còn lại": 90-61 ngày xanh green nhạt, 60-31
   // ngày xanh cyan nhạt, 30-1 ngày vàng nhạt, 0 ngày (và quá hạn) đỏ nhạt.
+  // Màu nền cả dòng theo mức khẩn cấp của "Thời gian còn lại" (SO VỚI NGÀY ĐẾN HẠN GỐC — không phải
+  // ngày gia hạn lần N): 90-61 ngày vàng nhạt, 60-31 ngày cam nhạt, 30-0 ngày (và quá hạn) tím nhạt
+  // (magenta nhạt). Người đang gia hạn lần bất kỳ luôn tô đỏ nhạt riêng (xem borrowerRowHtml).
   function daysRemainingRowColor(dueDateStr){
     const d = daysRemainingUntil(dueDateStr);
     if(d==null) return '';
-    if(d<=0) return 'rgba(239,83,80,.20)';
-    if(d<=30) return 'rgba(255,213,79,.28)';
-    if(d<=60) return 'rgba(77,208,225,.22)';
-    if(d<=90) return 'rgba(129,199,132,.22)';
+    if(d<=30) return 'rgba(216,27,96,.16)';
+    if(d<=60) return 'rgba(255,152,0,.20)';
+    if(d<=90) return 'rgba(255,235,59,.30)';
     return '';
   }
   // Hộ vay ĐÃ QUÁ HẠN (so với Ngày đến hạn, hoặc Ngày gia hạn gần nhất nếu có) mà CHƯA được xử lý gì
@@ -7285,9 +7298,55 @@ ${fileGenerationTrainingText()}`;
       </div>`;
   }
 
-  function renderBorrowerGroupedTablesHtml(list, visibleCols, projectsRaw, canEdit){
-    if(!list.length) return `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
+  // Hàng của 1 người vay trong bảng Danh sách người vay — DÙNG CHUNG cho cả khung "Quá hạn chưa xử
+  // lý" (pinned, không kéo-thả được) lẫn khung bình thường (có thể kéo-thả khi đang Sắp xếp).
+  function borrowerRowHtml(b, nameCol, restCols, sortingThis, gid, forcePinned){
+    const exts = getBorrowerExtensions(b.id);
+    const overdueUnhandled = borrowerIsOverdueUnhandled(b);
+    const isExtended = exts.length>0; // đang được gia hạn (bất kỳ lần nào 1-5)
+    const rowColor = (overdueUnhandled || isExtended) ? 'rgba(239,83,80,.24)' : daysRemainingRowColor(projectOf(b)? projectOf(b).dueDate : b.dueDate);
+    const textStyle = overdueUnhandled ? ' color:#b71c1c; font-weight:700;' : '';
+    return `<tr${sortingThis&&!forcePinned? ` draggable="true" data-drag-borrower="${b.id}" data-drag-borrower-project="${gid}"` : ''}${rowColor? ` style="background:${rowColor};${textStyle}"` : (textStyle? ` style="${textStyle}"` : '')}>
+      <td class="sv-sticky-1" style="background:var(--white); ${sortingThis&&!forcePinned?'cursor:grab;':''}">${(sortingThis&&!forcePinned)? `<span title="Kéo để đổi vị trí">☰</span>` : `<button class="btn btn-ghost btn-sm" data-view="${b.id}" title="Xem/Sửa" style="padding:4px 8px;">✏️</button>`}</td>
+      <td class="sv-sticky-2" style="background:var(--white);${textStyle}">${overdueUnhandled? '⚠️ ' : ''}${nameCol? (b.isHeir? `<u>${nameCol.get(b)}</u>` : nameCol.get(b)) : ''}</td>
+      ${restCols.map(c=>`<td class="${c.align==='right'?'money':''}"${textStyle?` style="${textStyle}"`:''}>${c.get(b)}</td>`).join('')}
+    </tr>`;
+  }
+  function renderBorrowerGroupedTablesHtml(list, visibleCols, projectsRaw, canEdit, overdueList){
+    overdueList = overdueList||[];
+    if(!list.length && !overdueList.length) return `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
     const projects = sortedActiveProjects(projectsRaw); // đồng bộ đúng thứ tự tuỳ chỉnh với panel Phương án vay
+    const nameCol0 = visibleCols[0], restCols0 = visibleCols.slice(1);
+    // ---- Khung RIÊNG cho từng phương án có hộ Quá hạn CHƯA XỬ LÝ — luôn hiện đầu tiên, pinned,
+    // không bị ảnh hưởng bởi bộ lọc Quý/Năm, không kéo-thả được. ----
+    const overdueGroups = {};
+    overdueList.forEach(b=>{
+      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
+      (overdueGroups[key] = overdueGroups[key]||[]).push(b);
+    });
+    const overdueGroupOrder = projects.map(p=>p.id).filter(pid=>overdueGroups[pid]);
+    if(overdueGroups['__none__']) overdueGroupOrder.push('__none__');
+    const overdueHtml = overdueGroupOrder.map(gid=>{
+      const groupList = overdueGroups[gid];
+      const proj = gid==='__none__' ? null : projects.find(p=>p.id===gid);
+      const projName = proj ? escapeHtml(proj.name) : '(Không rõ phương án — có thể đã bị xoá)';
+      return `
+      <div style="margin-bottom:18px;">
+        <div class="sv-group-header" style="background:rgba(211,47,47,.16); display:flex; align-items:center; gap:6px;"><span style="color:#b71c1c; font-weight:800;">⚠️ Quá hạn chưa được xử lý —</span><span>📋 ${projName} (${groupList.length} người vay)</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th class="sv-sticky-1"></th>
+              <th class="sv-sticky-2">${nameCol0? escapeHtml(nameCol0.label) : ''}</th>
+              ${restCols0.map(c=>`<th>${htmlLabel(c.label)}</th>`).join('')}
+            </tr></thead>
+            <tbody>${groupList.map(b=> borrowerRowHtml(b, nameCol0, restCols0, false, gid, true)).join('')}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }).join('');
+    // ---- Khung bình thường (theo đúng bộ lọc Quý/Năm hiện hành) ----
+    if(!list.length) return overdueHtml || `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
     const groups = {};
     list.forEach(b=>{
       const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
@@ -7306,16 +7365,10 @@ ${fileGenerationTrainingText()}`;
       const nameCol = visibleCols[0]; // luôn là cột "Họ và tên" vì đã khoá cứng đứng đầu tiên
       const restCols = visibleCols.slice(1);
       const sortingThis = state.sortingBorrowersProjectId===gid;
-      let groupList = sortingThis && state._borrowerSortDraft
+      const groupList = sortingThis && state._borrowerSortDraft
         ? state._borrowerSortDraft.map(id=>rawGroupList.find(b=>b.id===id)).filter(Boolean)
         : sortedBorrowerGroup(rawGroupList, gid);
       if(sortingThis && !state._borrowerSortDraft) state._borrowerSortDraft = groupList.map(b=>b.id);
-      // Hộ quá hạn CHƯA XỬ LÝ luôn được đẩy lên đầu (trừ khi đang ở chế độ sắp xếp thủ công, để
-      // không phá vỡ thao tác kéo-thả đang làm dở).
-      if(!sortingThis) groupList = groupList.slice().sort((a,b2)=>{
-        const ao = borrowerIsOverdueUnhandled(a), bo = borrowerIsOverdueUnhandled(b2);
-        return (ao===bo) ? 0 : (ao? -1 : 1);
-      });
       return `
       <div style="margin-bottom:18px;">
         <div class="sv-group-header" style="background:${projectGroupHeaderBg(gid)}; display:flex; align-items:center; gap:6px;">${(canEdit && gid!=='__none__')? `<button type="button" class="btn-plain-icon preview-allow" data-borrower-sort-toggle="${gid}" title="Sắp xếp danh sách" style="font-size:15px; cursor:pointer; background:none; border:none;">☰</button>` : ''}<span>📋 ${projName} (${rawGroupList.length} người vay)${capitalTxt}${durationTxt}</span></div>
@@ -7333,17 +7386,7 @@ ${fileGenerationTrainingText()}`;
               <th class="sv-sticky-2">${nameCol? escapeHtml(nameCol.label) : ''}</th>
               ${restCols.map(c=>`<th>${htmlLabel(c.label)}</th>`).join('')}
             </tr></thead>
-            <tbody>${groupList.map(b=>{
-              const exts = getBorrowerExtensions(b.id);
-              const dueRef = exts.length? exts[exts.length-1].to : (proj? proj.dueDate : b.dueDate);
-              const overdueUnhandled = borrowerIsOverdueUnhandled(b);
-              const rowColor = overdueUnhandled ? 'rgba(211,47,47,.30)' : daysRemainingRowColor(dueRef);
-              return `<tr${sortingThis? ` draggable="true" data-drag-borrower="${b.id}" data-drag-borrower-project="${gid}"` : ''}${rowColor? ` style="background:${rowColor};"` : ''}>
-                <td class="sv-sticky-1" style="background:var(--white); ${sortingThis?'cursor:grab;':''}">${sortingThis? `<span title="Kéo để đổi vị trí">☰</span>` : `<button class="btn btn-ghost btn-sm" data-view="${b.id}" title="Xem/Sửa" style="padding:4px 8px;">✏️</button>`}</td>
-                <td class="sv-sticky-2" style="background:var(--white);">${overdueUnhandled? '⚠️ ' : ''}${nameCol? (b.isHeir? `<u>${nameCol.get(b)}</u>` : nameCol.get(b)) : ''}</td>
-                ${restCols.map(c=>`<td class="${c.align==='right'?'money':''}">${c.get(b)}</td>`).join('')}
-              </tr>`;
-            }).join('')}
+            <tbody>${groupList.map(b=> borrowerRowHtml(b, nameCol, restCols, sortingThis, gid, false)).join('')}
             <tr style="background:var(--paper-2); font-weight:700;">
               <td class="sv-sticky-1" style="background:var(--paper-2);"></td>
               <td class="sv-sticky-2" style="background:var(--paper-2);">${borrowerAggregateCellValue('name', rawGroupList)}</td>
@@ -7354,7 +7397,7 @@ ${fileGenerationTrainingText()}`;
         </div>
       </div>`;
     }).join('');
-    return statsHtml + groupsHtml;
+    return overdueHtml + statsHtml + groupsHtml;
   }
 
   // Bảng nhóm dành riêng cho modal "Tính tiền lãi và phê duyệt đóng lãi" — cột đầu là checkbox "Đã
@@ -7417,25 +7460,22 @@ ${fileGenerationTrainingText()}`;
   function renderIAGroupedTablesHtml(list, projectsRaw){
     if(!list.length) return `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
     const projects = sortedActiveProjects(projectsRaw);
-    const groups = {};
-    list.forEach(b=>{
-      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
-      (groups[key] = groups[key]||[]).push(b);
-    });
-    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
-    if(groups['__none__']) groupOrder.push('__none__');
     const curQNum = todayBasedQuarterKey().replace('q','');
     const statsHtml = renderIAOverallStatsHtml(list, state.config.hamlets||[]);
-    const groupsHtml = groupOrder.map(gid=>{
-      const groupList = sortedBorrowerGroup(groups[gid], gid);
+    function renderOneGroup(gid, groupListRaw, isOverdueBox){
+      const groupList = isOverdueBox ? groupListRaw : sortedBorrowerGroup(groupListRaw, gid);
       const proj = gid==='__none__' ? null : projects.find(p=>p.id===gid);
       const projName = proj ? escapeHtml(proj.name) : '(Không rõ phương án — có thể đã bị xoá)';
       const duration = proj ? calcLoanDuration(proj.disburseDate, proj.dueDate) : '';
       const capitalTxt = proj ? `, ${groupDigitsRight(String(Math.round(proj.totalCapital||0)),3)} đồng` : '';
       const durationTxt = duration ? `, ${duration}` : '';
+      const headerHtml = isOverdueBox
+        ? `<span style="color:#b71c1c; font-weight:800;">⚠️ Quá hạn chưa được xử lý —</span><span>📋 ${projName} (${groupList.length} người vay)</span>`
+        : `📋 ${projName} (${groupList.length} người vay)${capitalTxt}${durationTxt}`;
+      const headerBg = isOverdueBox ? 'rgba(211,47,47,.16)' : projectGroupHeaderBg(gid);
       return `
       <div style="margin-bottom:18px;">
-        <div class="sv-group-header" style="background:${projectGroupHeaderBg(gid)};">📋 ${projName} (${groupList.length} người vay)${capitalTxt}${durationTxt}</div>
+        <div class="sv-group-header" style="background:${headerBg}; display:flex; align-items:center; gap:6px;">${headerHtml}</div>
         <div class="table-wrap">
           <table>
             <thead><tr>
@@ -7452,17 +7492,20 @@ ${fileGenerationTrainingText()}`;
             </tr></thead>
             <tbody>${groupList.map(b=>{
               const dueRef = proj? proj.dueDate : b.dueDate;
-              const rowColor = daysRemainingRowColor(dueRef);
+              const exts = getBorrowerExtensions(b.id);
+              const overdueUnhandled = borrowerIsOverdueUnhandled(b);
+              const rowColor = (overdueUnhandled || exts.length>0) ? 'rgba(239,83,80,.24)' : daysRemainingRowColor(dueRef);
+              const textStyle = overdueUnhandled ? 'color:#b71c1c; font-weight:700;' : '';
               const rowBg = rowColor || 'var(--white)';
               const dispB = computeInterestPaymentBoxDisplay(b);
               const paidCount = dispB.paidLines.length;
               const totalUnpaidB = dispB.unpaidTotal + dispB.futureUnpaidTotal;
               const curBox = borrowerCurrentQuarterBox(b);
               const unpaidNames = dispB.unpaidLines.map(x=>x.name).join(', ');
-              return `<tr${rowColor? ` style="background:${rowColor};"` : ''}>
-                <td class="frz-col1" style="background:${rowBg};"><button class="ext-action-btn ext-green preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ia-hist="${b.id}">Xem (${paidCount})</button></td>
-                <td class="frz-col2" style="background:${rowBg};">${totalUnpaidB<=0? `<button class="ext-action-btn" disabled title="Hộ vay này đã đóng hết lãi, không còn nợ lãi">Đóng tiền lãi</button>` : `<button class="ext-action-btn ext-green preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ia-pay="${b.id}">Đóng tiền lãi</button>`}</td>
-                <td class="frz-col3" style="background:${rowBg};${b.isHeir? ' text-decoration:underline;' : ''}">${escapeHtml(b.name)}</td>
+              return `<tr${rowColor? ` style="background:${rowColor};${textStyle}"` : (textStyle?` style="${textStyle}"`:'')}>
+                <td class="frz-col1" style="background:${rowBg};${textStyle}"><button class="ext-action-btn ext-green preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ia-hist="${b.id}">Xem (${paidCount})</button></td>
+                <td class="frz-col2" style="background:${rowBg};${textStyle}">${totalUnpaidB<=0? `<button class="ext-action-btn" disabled title="Hộ vay này đã đóng hết lãi, không còn nợ lãi">Đóng tiền lãi</button>` : `<button class="ext-action-btn ext-green preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ia-pay="${b.id}">Đóng tiền lãi</button>`}</td>
+                <td class="frz-col3" style="background:${rowBg};${textStyle}${b.isHeir? ' text-decoration:underline;' : ''}">${overdueUnhandled?'⚠️ ':''}${escapeHtml(b.name)}</td>
                 <td>${escapeHtml(b.hamlet||'')}</td>
                 <td class="money">${curBox? moneySpaced(curBox.interestAmount) : '—'}</td>
                 <td>${escapeHtml(unpaidNames)}</td>
@@ -7488,8 +7531,24 @@ ${fileGenerationTrainingText()}`;
           </table>
         </div>
       </div>`;
-    }).join('');
-    return statsHtml + groupsHtml;
+    }
+    const overdueList = list.filter(borrowerIsOverdueUnhandled);
+    const normalList = list.filter(b=>!borrowerIsOverdueUnhandled(b));
+    const overdueGroups = {};
+    overdueList.forEach(b=>{ const key=(b.projectId && projects.some(p=>p.id===b.projectId))?b.projectId:'__none__'; (overdueGroups[key]=overdueGroups[key]||[]).push(b); });
+    const overdueGroupOrder = projects.map(p=>p.id).filter(pid=>overdueGroups[pid]);
+    if(overdueGroups['__none__']) overdueGroupOrder.push('__none__');
+    const overdueHtml = overdueGroupOrder.map(gid=> renderOneGroup(gid, overdueGroups[gid], true)).join('');
+
+    const groups = {};
+    normalList.forEach(b=>{
+      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
+      (groups[key] = groups[key]||[]).push(b);
+    });
+    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
+    if(groups['__none__']) groupOrder.push('__none__');
+    const normalHtml = groupOrder.map(gid=> renderOneGroup(gid, groups[gid], false)).join('');
+    return statsHtml + overdueHtml + normalHtml;
   }
 
   // =====================================================================
@@ -7744,15 +7803,10 @@ ${fileGenerationTrainingText()}`;
   function renderExtensionGroupedTablesHtml(list, projectsRaw){
     if(!list.length) return `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
     const projects = sortedActiveProjects(projectsRaw);
-    const groups = {};
-    list.forEach(b=>{
-      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
-      (groups[key] = groups[key]||[]).push(b);
-    });
-    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
-    if(groups['__none__']) groupOrder.push('__none__');
-    return groupOrder.map(gid=>{
-      const groupList = sortedBorrowerGroup(groups[gid], gid);
+    // Hàm dựng 1 khung phương án — dùng CHUNG cho cả khung "Quá hạn chưa xử lý" (isOverdueBox=true,
+    // luôn tô đỏ, không cần sắp xếp) lẫn khung bình thường.
+    function renderOneGroup(gid, groupListRaw, isOverdueBox){
+      const groupList = isOverdueBox ? groupListRaw : sortedBorrowerGroup(groupListRaw, gid);
       const proj = gid==='__none__' ? null : projects.find(p=>p.id===gid);
       const projName = proj ? escapeHtml(proj.name) : '(Không rõ phương án — có thể đã bị xoá)';
       const duration = proj ? calcLoanDuration(proj.disburseDate, proj.dueDate) : '';
@@ -7763,22 +7817,28 @@ ${fileGenerationTrainingText()}`;
       const commonLevel = allSame ? extCounts[0] : null;
       const groupMaxedOut = allSame && commonLevel>=MAX_LOAN_EXTENSIONS;
       const totalXemLabel = allSame ? (commonLevel>0? `Xem (gH ${commonLevel} lần)` : 'Xem (0)') : 'Xem';
+      const headerHtml = isOverdueBox
+        ? `<span style="color:#b71c1c; font-weight:800;">⚠️ Quá hạn chưa được xử lý —</span><span>📋 ${projName} (${groupList.length} người vay)</span>`
+        : `📋 ${projName} (${groupList.length} người vay)${capitalTxt}${durationTxt}`;
+      const headerBg = isOverdueBox ? 'rgba(211,47,47,.16)' : projectGroupHeaderBg(gid);
       return `
       <div style="margin-bottom:18px;">
-        <div class="sv-group-header" style="background:${projectGroupHeaderBg(gid)};">📋 ${projName} (${groupList.length} người vay)${capitalTxt}${durationTxt}</div>
+        <div class="sv-group-header" style="background:${headerBg}; display:flex; align-items:center; gap:6px;">${headerHtml}</div>
         <div class="table-wrap">
           <table>
             <thead><tr><th class="frz-col1" style="background:var(--paper-2); min-width:110px;">Lịch sử gia hạn</th><th class="frz-col2" style="background:var(--paper-2); min-width:110px;">Quyết định</th><th class="frz-col3" style="background:var(--paper-2); min-width:140px;">Họ và tên</th><th>Số tiền gốc</th><th>Ngày đến hạn</th><th>Ngày gia hạn gần nhất</th></tr></thead>
             <tbody>${groupList.map(b=>{
               const exts = getBorrowerExtensions(b.id);
               const xemLabel = exts.length ? `Xem (gH ${exts.length} lần)` : 'Xem (0)';
-              const rowColor = daysRemainingRowColor(b.dueDate);
+              const overdueUnhandled = borrowerIsOverdueUnhandled(b);
+              const rowColor = (overdueUnhandled || exts.length>0) ? 'rgba(239,83,80,.24)' : daysRemainingRowColor(b.dueDate);
+              const textStyle = overdueUnhandled ? 'color:#b71c1c; font-weight:700;' : '';
               const maxedOut = exts.length>=MAX_LOAN_EXTENSIONS;
               const rowBg = rowColor || 'var(--white)';
-              return `<tr${rowColor? ` style="background:${rowColor};"` : ''}>
-                <td class="frz-col1" style="background:${rowBg};"><button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-history="${b.id}">${xemLabel}</button></td>
-                <td class="frz-col2" style="background:${rowBg};">${maxedOut? `<button class="ext-action-btn" disabled title="Đã đạt tối đa 5 lần gia hạn">GIA HẠN</button>` : `<button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-single="${b.id}">GIA HẠN</button>`}</td>
-                <td class="frz-col3" style="background:${rowBg};${b.isHeir? ' text-decoration:underline;' : ''}">${escapeHtml(b.name)}</td>
+              return `<tr${rowColor? ` style="background:${rowColor};${textStyle}"` : (textStyle?` style="${textStyle}"`:'')}>
+                <td class="frz-col1" style="background:${rowBg};${textStyle}"><button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-history="${b.id}">${xemLabel}</button></td>
+                <td class="frz-col2" style="background:${rowBg};${textStyle}">${maxedOut? `<button class="ext-action-btn" disabled title="Đã đạt tối đa 5 lần gia hạn">GIA HẠN</button>` : `<button class="ext-action-btn preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-ext-single="${b.id}">GIA HẠN</button>`}</td>
+                <td class="frz-col3" style="background:${rowBg};${textStyle}${b.isHeir? ' text-decoration:underline;' : ''}">${overdueUnhandled?'⚠️ ':''}${escapeHtml(b.name)}</td>
                 <td class="money">${moneySpaced(b.principal)}</td>
                 <td>${fmtDate(b.dueDate)}</td>
                 <td>${exts.length? 'hạn '+fmtDate(exts[exts.length-1].to) : ''}</td>
@@ -7796,7 +7856,24 @@ ${fileGenerationTrainingText()}`;
           </table>
         </div>
       </div>`;
-    }).join('');
+    }
+    const overdueList = list.filter(borrowerIsOverdueUnhandled);
+    const normalList = list.filter(b=>!borrowerIsOverdueUnhandled(b));
+    const overdueGroups = {};
+    overdueList.forEach(b=>{ const key=(b.projectId && projects.some(p=>p.id===b.projectId))?b.projectId:'__none__'; (overdueGroups[key]=overdueGroups[key]||[]).push(b); });
+    const overdueGroupOrder = projects.map(p=>p.id).filter(pid=>overdueGroups[pid]);
+    if(overdueGroups['__none__']) overdueGroupOrder.push('__none__');
+    const overdueHtml = overdueGroupOrder.map(gid=> renderOneGroup(gid, overdueGroups[gid], true)).join('');
+
+    const groups = {};
+    normalList.forEach(b=>{
+      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
+      (groups[key] = groups[key]||[]).push(b);
+    });
+    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
+    if(groups['__none__']) groupOrder.push('__none__');
+    const normalHtml = groupOrder.map(gid=> renderOneGroup(gid, groups[gid], false)).join('');
+    return overdueHtml + normalHtml;
   }
   function formatUnderlinedDMY(dateStr){
     if(!dateStr) return '<u>ngày …</u> <u>tháng …</u> <u>năm …</u>';
@@ -8049,29 +8126,28 @@ ${fileGenerationTrainingText()}`;
   function renderSettlementGroupedTablesHtml(list, projectsRaw){
     if(!list.length) return `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
     const projects = sortedActiveProjects(projectsRaw);
-    const groups = {};
-    list.forEach(b=>{
-      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
-      (groups[key] = groups[key]||[]).push(b);
-    });
-    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
-    if(groups['__none__']) groupOrder.push('__none__');
-    return groupOrder.map(gid=>{
-      const groupList = sortedBorrowerGroup(groups[gid], gid);
+    function renderOneGroup(gid, groupListRaw, isOverdueBox){
+      const groupList = isOverdueBox ? groupListRaw : sortedBorrowerGroup(groupListRaw, gid);
       const proj = gid==='__none__' ? null : projects.find(p=>p.id===gid);
       const projName = proj ? escapeHtml(proj.name) : '(Không rõ phương án — có thể đã bị xoá)';
       const duration = proj ? calcLoanDuration(proj.disburseDate, proj.dueDate) : '';
       const capitalTxt = proj ? `, ${groupDigitsRight(String(Math.round(proj.totalCapital||0)),3)} đồng` : '';
       const durationTxt = duration ? `, ${duration}` : '';
+      const headerHtml = isOverdueBox
+        ? `<span style="color:#b71c1c; font-weight:800;">⚠️ Quá hạn chưa được xử lý —</span><span>📋 ${projName} (${groupList.length} người vay)</span>`
+        : `📋 ${projName} (${groupList.length} người vay)${capitalTxt}${durationTxt}`;
+      const headerBg = isOverdueBox ? 'rgba(211,47,47,.16)' : projectGroupHeaderBg(gid);
       return `
       <div style="margin-bottom:18px;">
-        <div class="sv-group-header" style="background:${projectGroupHeaderBg(gid)};">📋 ${projName} (${groupList.length} người vay)${capitalTxt}${durationTxt}</div>
+        <div class="sv-group-header" style="background:${headerBg}; display:flex; align-items:center; gap:6px;">${headerHtml}</div>
         <div class="table-wrap">
           <table>
             <thead><tr><th class="frz-col1" style="background:var(--paper-2); min-width:110px;">Trả nợ trước hạn</th><th class="frz-col2" style="background:var(--paper-2); min-width:110px;">Tất toán khoản vay</th><th class="frz-col3" style="background:var(--paper-2); min-width:140px;">Họ và tên</th><th>Số tiền gốc</th><th>Tiền lãi chưa đóng<br>(Tính đến QUÝ Hiện Tại)</th><th>Tiền lãi chưa đóng<br>(Tính đến Ngày Hiện Tại)</th><th>Ngày đến hạn</th><th>Ngày gia hạn gần nhất</th></tr></thead>
             <tbody>${groupList.map(b=>{
               const exts = getBorrowerExtensions(b.id);
-              const rowColor = daysRemainingRowColor(b.dueDate);
+              const overdueUnhandled = borrowerIsOverdueUnhandled(b);
+              const rowColor = (overdueUnhandled || exts.length>0) ? 'rgba(239,83,80,.24)' : daysRemainingRowColor(b.dueDate);
+              const textStyle = overdueUnhandled ? 'color:#b71c1c; font-weight:700;' : '';
               const rowBg = rowColor || 'var(--white)';
               const disp = computeInterestPaymentBoxDisplay(b);
               const upToTodayAmt = borrowerUnpaidInterestUpToToday(b).total;
@@ -8084,10 +8160,10 @@ ${fileGenerationTrainingText()}`;
               if(b.isHeir) earlyRepayReason = 'Người thừa kế khoản vay chỉ được phép Tất toán khoản vay, không được Trả nợ trước hạn.';
               else if(inExt) earlyRepayReason = 'Hộ vay đang trong thời gian gia hạn nợ nên chỉ được phép Tất toán khoản vay, không được Trả nợ trước hạn.';
               else if(dLeft!=null && dLeft<=29) earlyRepayReason = `Hộ vay chỉ còn ${dLeft} ngày là đến hạn (≤29 ngày) nên không được Trả nợ trước hạn nữa, vui lòng chọn "Tất toán khoản vay".`;
-              return `<tr${rowColor? ` style="background:${rowColor};"` : ''}>
-                <td class="frz-col1" style="background:${rowBg};"><button class="ext-action-btn ext-blue preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-settle-early="${b.id}" data-settle-early-ok="${canEarlyRepay?'1':'0'}" data-settle-early-reason="${escapeHtml(earlyRepayReason)}">Trả nợ trước hạn</button></td>
-                <td class="frz-col2" style="background:${rowBg};"><button class="ext-action-btn ext-blue preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-settle-final="${b.id}" data-settle-final-ok="${canSettleFinal?'1':'0'}">Tất toán khoản vay</button></td>
-                <td class="frz-col3" style="background:${rowBg};${b.isHeir? ' text-decoration:underline;' : ''}">${escapeHtml(b.name)}</td>
+              return `<tr${rowColor? ` style="background:${rowColor};${textStyle}"` : (textStyle?` style="${textStyle}"`:'')}>
+                <td class="frz-col1" style="background:${rowBg};${textStyle}"><button class="ext-action-btn ext-blue preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-settle-early="${b.id}" data-settle-early-ok="${canEarlyRepay?'1':'0'}" data-settle-early-reason="${escapeHtml(earlyRepayReason)}">Trả nợ trước hạn</button></td>
+                <td class="frz-col2" style="background:${rowBg};${textStyle}"><button class="ext-action-btn ext-blue preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-settle-final="${b.id}" data-settle-final-ok="${canSettleFinal?'1':'0'}">Tất toán khoản vay</button></td>
+                <td class="frz-col3" style="background:${rowBg};${textStyle}${b.isHeir? ' text-decoration:underline;' : ''}">${overdueUnhandled?'⚠️ ':''}${escapeHtml(b.name)}</td>
                 <td class="money">${moneySpaced(b.principal)}</td>
                 <td class="money">${moneySpaced(disp.unpaidTotal)}</td>
                 <td class="money">${moneySpaced(upToTodayAmt)}</td>
@@ -8109,7 +8185,24 @@ ${fileGenerationTrainingText()}`;
           </table>
         </div>
       </div>`;
-    }).join('');
+    }
+    const overdueList = list.filter(borrowerIsOverdueUnhandled);
+    const normalList = list.filter(b=>!borrowerIsOverdueUnhandled(b));
+    const overdueGroups = {};
+    overdueList.forEach(b=>{ const key=(b.projectId && projects.some(p=>p.id===b.projectId))?b.projectId:'__none__'; (overdueGroups[key]=overdueGroups[key]||[]).push(b); });
+    const overdueGroupOrder = projects.map(p=>p.id).filter(pid=>overdueGroups[pid]);
+    if(overdueGroups['__none__']) overdueGroupOrder.push('__none__');
+    const overdueHtml = overdueGroupOrder.map(gid=> renderOneGroup(gid, overdueGroups[gid], true)).join('');
+
+    const groups = {};
+    normalList.forEach(b=>{
+      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
+      (groups[key] = groups[key]||[]).push(b);
+    });
+    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
+    if(groups['__none__']) groupOrder.push('__none__');
+    const normalHtml = groupOrder.map(gid=> renderOneGroup(gid, groups[gid], false)).join('');
+    return overdueHtml + normalHtml;
   }
 
   // =====================================================================
@@ -8166,21 +8259,18 @@ ${fileGenerationTrainingText()}`;
   function renderRiskDebtTablesHtml(list, projectsRaw, isConfirmedList){
     if(!list.length) return `<div class="empty-state"><div class="e-ico">🌾</div>${isConfirmedList? 'Chưa có hộ vay nào trong Danh sách Nợ rủi ro.' : 'Chưa có người vay nào theo bộ lọc hiện tại'}</div>`;
     const projects = sortedActiveProjects(projectsRaw);
-    const groups = {};
-    list.forEach(b=>{
-      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
-      (groups[key] = groups[key]||[]).push(b);
-    });
-    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
-    if(groups['__none__']) groupOrder.push('__none__');
-    return groupOrder.map(gid=>{
-      const groupList = sortedBorrowerGroup(groups[gid], gid);
+    function renderOneGroup(gid, groupListRaw, isOverdueBox){
+      const groupList = isOverdueBox ? groupListRaw : sortedBorrowerGroup(groupListRaw, gid);
       const proj = gid==='__none__' ? null : projects.find(p=>p.id===gid);
       const projName = proj ? escapeHtml(proj.name) : '(Không rõ phương án — có thể đã bị xoá)';
       const capitalTxt = proj ? `, ${groupDigitsRight(String(Math.round(proj.totalCapital||0)),3)} đồng` : '';
+      const headerHtml = isOverdueBox
+        ? `<span style="color:#b71c1c; font-weight:800;">⚠️ Quá hạn chưa được xử lý —</span><span>📋 ${projName} (${groupList.length} người vay)</span>`
+        : `📋 ${projName} (${groupList.length} người vay)${capitalTxt}`;
+      const headerBg = isOverdueBox ? 'rgba(211,47,47,.16)' : projectGroupHeaderBg(gid);
       return `
       <div style="margin-bottom:18px;">
-        <div class="sv-group-header" style="background:${projectGroupHeaderBg(gid)};">📋 ${projName} (${groupList.length} người vay)${capitalTxt}</div>
+        <div class="sv-group-header" style="background:${headerBg}; display:flex; align-items:center; gap:6px;">${headerHtml}</div>
         <div class="table-wrap">
           <table>
             <thead><tr>
@@ -8194,15 +8284,17 @@ ${fileGenerationTrainingText()}`;
             </tr></thead>
             <tbody>${groupList.map(b=>{
               const exts = getBorrowerExtensions(b.id);
-              const rowColor = daysRemainingRowColor(b.dueDate);
+              const overdueUnhandled = borrowerIsOverdueUnhandled(b);
+              const rowColor = (overdueUnhandled || exts.length>0) ? 'rgba(239,83,80,.24)' : daysRemainingRowColor(b.dueDate);
+              const textStyle = overdueUnhandled ? 'color:#b71c1c; font-weight:700;' : '';
               const rowBg = rowColor || 'var(--white)';
-              return `<tr${rowColor? ` style="background:${rowColor};"` : ''}>
-                <td class="frz-col1" style="background:${rowBg};">${isConfirmedList
+              return `<tr${rowColor? ` style="background:${rowColor};${textStyle}"` : (textStyle?` style="${textStyle}"`:'')}>
+                <td class="frz-col1" style="background:${rowBg};${textStyle}">${isConfirmedList
                   ? (b.badDebt
                       ? `<button class="ext-action-btn ext-red-light preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-baddebt-history="${b.id}">Lịch sử Nợ xấu</button>`
                       : `<button class="ext-action-btn ext-red-light preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-riskdebt-history="${b.id}">Lịch sử Nợ rủi ro</button>`)
                   : `<button class="ext-action-btn ext-red-light preview-allow" style="animation-delay:${(Math.random()*3.5).toFixed(2)}s;" data-riskdebt-confirm="${b.id}">Nợ rủi ro</button>`}</td>
-                <td class="frz-col2" style="background:${rowBg};${b.isHeir? ' text-decoration:underline;' : ''}">${escapeHtml(b.name)}</td>
+                <td class="frz-col2" style="background:${rowBg};${textStyle}${b.isHeir? ' text-decoration:underline;' : ''}">${overdueUnhandled?'⚠️ ':''}${escapeHtml(b.name)}</td>
                 <td class="money">${moneySpaced(b.principal)}</td>
                 <td>${fmtDate(b.dueDate)}</td>
                 <td>${exts.length? 'hạn '+fmtDate(exts[exts.length-1].to) : ''}</td>
@@ -8221,7 +8313,26 @@ ${fileGenerationTrainingText()}`;
           </table>
         </div>
       </div>`;
-    }).join('');
+    }
+    // Nợ rủi ro (đã xác nhận) không bao giờ được coi là "Quá hạn chưa xử lý" (đã có xử lý rồi) nên
+    // chỉ cần tách khung khi đang xét danh sách "chưa xác nhận".
+    const overdueList = isConfirmedList ? [] : list.filter(borrowerIsOverdueUnhandled);
+    const normalList = isConfirmedList ? list : list.filter(b=>!borrowerIsOverdueUnhandled(b));
+    const overdueGroups = {};
+    overdueList.forEach(b=>{ const key=(b.projectId && projects.some(p=>p.id===b.projectId))?b.projectId:'__none__'; (overdueGroups[key]=overdueGroups[key]||[]).push(b); });
+    const overdueGroupOrder = projects.map(p=>p.id).filter(pid=>overdueGroups[pid]);
+    if(overdueGroups['__none__']) overdueGroupOrder.push('__none__');
+    const overdueHtml = overdueGroupOrder.map(gid=> renderOneGroup(gid, overdueGroups[gid], true)).join('');
+
+    const groups = {};
+    normalList.forEach(b=>{
+      const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
+      (groups[key] = groups[key]||[]).push(b);
+    });
+    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
+    if(groups['__none__']) groupOrder.push('__none__');
+    const normalHtml = groupOrder.map(gid=> renderOneGroup(gid, groups[gid], false)).join('');
+    return overdueHtml + normalHtml;
   }
   // Panel/bảng "Danh sách khoản vay Nợ rủi ro" — dùng CHUNG cho cả panel độc lập ở Sổ vay vốn lẫn
   // phần cuối modal "Thêm, xoá, quản lý Nợ rủi ro". Mặc định chỉ hiện "Đang xử lý" (loại trừ Nợ xấu);
@@ -10253,16 +10364,16 @@ ${fileGenerationTrainingText()}`;
     if(state.filterProjectIds.length < projects.length) list = list.filter(b=>state.filterProjectIds.includes(b.projectId));
     { const fs=fundSourcesInUse(); ensureFilterFundSourcesInit(fs); if(state.filterFundSources.length < fs.length) list = list.filter(b=>state.filterFundSources.includes((b.fundSource||'').trim())); }
     { const mgrs=ensureDefaultManagers(); ensureFilterManagersInit(mgrs); if(state.filterManagerIds.length < mgrs.length) list = list.filter(b=>state.filterManagerIds.includes(b.managerId||'chihoitruong')); }
-    // Hộ quá hạn CHƯA XỬ LÝ luôn phải hiện ra (đẩy lên đầu danh sách), KHÔNG được để bộ lọc Quý/Năm
-    // che mất — vì các hộ này rất có thể đang thuộc 1 Quý trong quá khứ, không khớp bộ lọc mặc định
-    // (Quý hiện tại), nếu để bị lọc mất thì xã/phường sẽ không hề biết mà xử lý.
-    const overdueBeforeQuarterFilter = list.filter(borrowerIsOverdueUnhandled);
+    // Hộ quá hạn CHƯA XỬ LÝ luôn phải hiện ra (tách thành khung riêng), TUYỆT ĐỐI KHÔNG bị bộ lọc
+    // Quý/Năm ảnh hưởng dưới bất kỳ hình thức nào — vì các hộ này rất có thể đang thuộc 1 Quý trong
+    // quá khứ (hoặc ngoài phạm vi năm đang lọc), nếu để bị lọc mất thì xã/phường sẽ không hề biết.
+    const overdueList = list.filter(borrowerIsOverdueUnhandled);
+    list = list.filter(b=>!borrowerIsOverdueUnhandled(b));
     list = list.filter(borrowerLoanRangeMatchesFilter);
-    overdueBeforeQuarterFilter.forEach(b=>{ if(!list.includes(b)) list.push(b); });
 
     // "Danh sách Phương án vay đang hoạt động" — CHỈ hiện đúng những phương án có ít nhất 1 người vay
-    // đang nằm trong "Danh sách Khoản vay đang hoạt động" (list) phía dưới.
-    const activeProjectIds = new Set(list.map(b=>b.projectId).filter(Boolean));
+    // đang nằm trong "Danh sách Khoản vay đang hoạt động" (list + overdueList) phía dưới.
+    const activeProjectIds = new Set(list.concat(overdueList).map(b=>b.projectId).filter(Boolean));
     const activeProjectsOnlyRaw = projects.filter(p=>activeProjectIds.has(p.id));
     const hiddenProjects = projects.filter(p=>!activeProjectIds.has(p.id));
     const sortingProjects = !!state.sortingProjects;
@@ -10352,7 +10463,7 @@ ${fileGenerationTrainingText()}`;
       </div>
 
       <div class="panel">
-        <div class="panel-head" style="cursor:pointer;" id="lp-borrowers-toggle"><h3>👥 Danh sách Khoản vay đang hoạt động (${list.length} hộ vay)${list.filter(borrowerIsOverdueUnhandled).length? ` <span style="color:#d32f2f;">— ⚠️ ${list.filter(borrowerIsOverdueUnhandled).length} hộ quá hạn chưa xử lý</span>` : ''} ${state.showBorrowersList===false?'▾':'▴'}</h3>${canEdit? `<button class="btn btn-primary btn-sm" id="lp-add-borrower-any-btn">➕ Thêm người vay</button>` : ''}</div>
+        <div class="panel-head" style="cursor:pointer;" id="lp-borrowers-toggle"><h3>👥 Danh sách Khoản vay đang hoạt động (${list.length+overdueList.length} hộ vay)${overdueList.length? ` <span style="color:#d32f2f;">— ⚠️ ${overdueList.length} hộ quá hạn chưa xử lý</span>` : ''} ${state.showBorrowersList===false?'▾':'▴'}</h3>${canEdit? `<button class="btn btn-primary btn-sm" id="lp-add-borrower-any-btn">➕ Thêm người vay</button>` : ''}</div>
         ${state.showBorrowersList===false? '' : `<div class="panel-body">
           <div class="toolbar" style="flex-wrap:wrap;">
             <input id="f-search" class="preview-allow" placeholder="🔎 Tìm theo tên, CCCD, SĐT..." value="${state.search}" style="min-width:200px;">
@@ -10400,7 +10511,7 @@ ${fileGenerationTrainingText()}`;
           </div>`;
           })() : ''}
 
-          <div id="borrower-table-area">${renderBorrowerGroupedTablesHtml(list, visibleCols, projects, canEdit)}</div>
+          <div id="borrower-table-area">${renderBorrowerGroupedTablesHtml(list, visibleCols, projects, canEdit, overdueList)}</div>
           ${currentQuarterBoundariesCaptionHtml()}
           <div style="text-align:center; margin-top:14px;"><button class="btn btn-ghost btn-sm preview-allow" id="lp-borrowers-collapse-all">Rút gọn toàn bộ danh sách</button></div>
         </div>`}
