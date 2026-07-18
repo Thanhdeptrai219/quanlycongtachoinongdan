@@ -7312,41 +7312,44 @@ ${fileGenerationTrainingText()}`;
       ${restCols.map(c=>`<td class="${c.align==='right'?'money':''}"${textStyle?` style="${textStyle}"`:''}>${c.get(b)}</td>`).join('')}
     </tr>`;
   }
-  function renderBorrowerGroupedTablesHtml(list, visibleCols, projectsRaw, canEdit, overdueList){
-    overdueList = overdueList||[];
-    if(!list.length && !overdueList.length) return `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
-    const projects = sortedActiveProjects(projectsRaw); // đồng bộ đúng thứ tự tuỳ chỉnh với panel Phương án vay
-    const nameCol0 = visibleCols[0], restCols0 = visibleCols.slice(1);
-    // ---- Khung RIÊNG cho từng phương án có hộ Quá hạn CHƯA XỬ LÝ — luôn hiện đầu tiên, pinned,
-    // không bị ảnh hưởng bởi bộ lọc Quý/Năm, không kéo-thả được. ----
-    const overdueGroups = {};
+  // Panel RIÊNG BIỆT "⚠️ Khoản vay quá hạn nhưng chưa được xử lý" — hoàn toàn độc lập, KHÔNG có bộ
+  // lọc/tuỳ chỉnh cột riêng, dùng ĐÚNG bộ cột đang cấu hình ở Panel "Khoản vay đang hoạt động"
+  // (visibleCols), nhưng danh sách bên trong KHÔNG bao giờ bị bộ lọc Ấp/Phương án/Quý/Năm/Tìm kiếm...
+  // ảnh hưởng — luôn hiện đủ 100% hộ quá hạn chưa xử lý trên toàn xã. Ẩn hẳn nếu rỗng.
+  function buildOverdueUnhandledPanelHtml(overdueList, visibleCols, projectsRaw){
+    if(!overdueList.length) return '';
+    const projects = sortedActiveProjects(projectsRaw);
+    const nameCol = visibleCols[0], restCols = visibleCols.slice(1);
+    const groups = {};
     overdueList.forEach(b=>{
       const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
-      (overdueGroups[key] = overdueGroups[key]||[]).push(b);
+      (groups[key] = groups[key]||[]).push(b);
     });
-    const overdueGroupOrder = projects.map(p=>p.id).filter(pid=>overdueGroups[pid]);
-    if(overdueGroups['__none__']) overdueGroupOrder.push('__none__');
-    const overdueHtml = overdueGroupOrder.map(gid=>{
-      const groupList = overdueGroups[gid];
+    const groupOrder = projects.map(p=>p.id).filter(pid=>groups[pid]);
+    if(groups['__none__']) groupOrder.push('__none__');
+    return groupOrder.map(gid=>{
+      const groupList = groups[gid];
       const proj = gid==='__none__' ? null : projects.find(p=>p.id===gid);
       const projName = proj ? escapeHtml(proj.name) : '(Không rõ phương án — có thể đã bị xoá)';
       return `
       <div style="margin-bottom:18px;">
-        <div class="sv-group-header" style="background:rgba(211,47,47,.16); display:flex; align-items:center; gap:6px;"><span style="color:#b71c1c; font-weight:800;">⚠️ Quá hạn chưa được xử lý —</span><span>📋 ${projName} (${groupList.length} người vay)</span></div>
+        <div class="sv-group-header" style="background:rgba(211,47,47,.20); border:2px solid #b71c1c; display:flex; align-items:center; gap:6px;"><span style="color:#b71c1c; font-weight:800;">⚠️ Quá hạn chưa được xử lý —</span><span style="color:#b71c1c; font-weight:800;">📋 ${projName} (${groupList.length} người vay)</span></div>
         <div class="table-wrap">
           <table>
             <thead><tr>
               <th class="sv-sticky-1"></th>
-              <th class="sv-sticky-2">${nameCol0? escapeHtml(nameCol0.label) : ''}</th>
-              ${restCols0.map(c=>`<th>${htmlLabel(c.label)}</th>`).join('')}
+              <th class="sv-sticky-2">${nameCol? escapeHtml(nameCol.label) : ''}</th>
+              ${restCols.map(c=>`<th>${htmlLabel(c.label)}</th>`).join('')}
             </tr></thead>
-            <tbody>${groupList.map(b=> borrowerRowHtml(b, nameCol0, restCols0, false, gid, true)).join('')}</tbody>
+            <tbody>${groupList.map(b=> borrowerRowHtml(b, nameCol, restCols, false, gid, true)).join('')}</tbody>
           </table>
         </div>
       </div>`;
     }).join('');
-    // ---- Khung bình thường (theo đúng bộ lọc Quý/Năm hiện hành) ----
-    if(!list.length) return overdueHtml || `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
+  }
+  function renderBorrowerGroupedTablesHtml(list, visibleCols, projectsRaw, canEdit){
+    if(!list.length) return `<div class="empty-state"><div class="e-ico">🌾</div>Chưa có người vay nào theo bộ lọc hiện tại</div>`;
+    const projects = sortedActiveProjects(projectsRaw); // đồng bộ đúng thứ tự tuỳ chỉnh với panel Phương án vay
     const groups = {};
     list.forEach(b=>{
       const key = (b.projectId && projects.some(p=>p.id===b.projectId)) ? b.projectId : '__none__';
@@ -7397,7 +7400,7 @@ ${fileGenerationTrainingText()}`;
         </div>
       </div>`;
     }).join('');
-    return overdueHtml + statsHtml + groupsHtml;
+    return statsHtml + groupsHtml;
   }
 
   // Bảng nhóm dành riêng cho modal "Tính tiền lãi và phê duyệt đóng lãi" — cột đầu là checkbox "Đã
@@ -10462,8 +10465,17 @@ ${fileGenerationTrainingText()}`;
         </div>
       </div>
 
+      ${overdueList.length? `
       <div class="panel">
-        <div class="panel-head" style="cursor:pointer;" id="lp-borrowers-toggle"><h3>👥 Danh sách Khoản vay đang hoạt động (${list.length+overdueList.length} hộ vay)${overdueList.length? ` <span style="color:#d32f2f;">— ⚠️ ${overdueList.length} hộ quá hạn chưa xử lý</span>` : ''} ${state.showBorrowersList===false?'▾':'▴'}</h3>${canEdit? `<button class="btn btn-primary btn-sm" id="lp-add-borrower-any-btn">➕ Thêm người vay</button>` : ''}</div>
+        <div class="panel-head"><h3 style="color:#b71c1c;">⚠️ Khoản vay quá hạn nhưng chưa được xử lý (${overdueList.length} hộ vay)</h3></div>
+        <div class="panel-body">
+          <p class="sub" style="margin:0 0 10px;">Danh sách này LUÔN hiển thị đầy đủ, KHÔNG bị ảnh hưởng bởi bất kỳ bộ lọc nào (kể cả bộ lọc Quý/Năm) ở Panel "Danh sách Khoản vay đang hoạt động" phía dưới — chỉ tự động biến mất khi hộ vay được xử lý xong (tất toán, gia hạn tiếp, hoặc đưa vào Nợ rủi ro).</p>
+          ${buildOverdueUnhandledPanelHtml(overdueList, visibleCols, projects)}
+        </div>
+      </div>` : ''}
+
+      <div class="panel">
+        <div class="panel-head" style="cursor:pointer;" id="lp-borrowers-toggle"><h3>👥 Danh sách Khoản vay đang hoạt động (${list.length} hộ vay) ${state.showBorrowersList===false?'▾':'▴'}</h3>${canEdit? `<button class="btn btn-primary btn-sm" id="lp-add-borrower-any-btn">➕ Thêm người vay</button>` : ''}</div>
         ${state.showBorrowersList===false? '' : `<div class="panel-body">
           <div class="toolbar" style="flex-wrap:wrap;">
             <input id="f-search" class="preview-allow" placeholder="🔎 Tìm theo tên, CCCD, SĐT..." value="${state.search}" style="min-width:200px;">
