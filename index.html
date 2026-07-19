@@ -10324,8 +10324,24 @@ ${fileGenerationTrainingText()}`;
       }
       const refundBtn = wrap.querySelector('#iahist-refund-btn');
       if(refundBtn) refundBtn.onclick = ()=>{ close(); renderRefundSelectionModal(b); };
-      const overflowBtn = wrap.querySelector('#iahist-overflow-btn');
-      if(overflowBtn) overflowBtn.onclick = ()=>{ close(); renderOverflowReceiptModal(b, overflowAmount, allLineItems.length); };
+      // Nút "Xử lý số tiền vượt ngưỡng" — gắn sự kiện qua UỶ QUYỀN (event delegation) trên `wrap`
+      // NGOÀI CÙNG (được tạo đúng 1 lần duy nhất khi mở bảng này, không bao giờ bị thay thế — khác
+      // với các phần tử BÊN TRONG innerHTML sẽ bị dựng lại mới hoàn toàn mỗi lần renderBody() chạy).
+      // Nhờ vậy nút này LUÔN nhận được click dù renderBody() có chạy lại bao nhiêu lần đi nữa. Số
+      // tiền vượt ngưỡng được tính lại TƯƠI MỚI ngay tại thời điểm bấm (chỉ gọi lại hàm ĐỌC dữ liệu
+      // có sẵn — computeInterestPaymentBoxDisplay — không đụng tới bất kỳ hàm tính toán nào cả).
+      if(!wrap._overflowBtnDelegated){
+        wrap._overflowBtnDelegated = true;
+        wrap.addEventListener('click', (e)=>{
+          if(!e.target.closest('#iahist-overflow-btn')) return;
+          const freshDisp = computeInterestPaymentBoxDisplay(b);
+          const freshTheoreticalTotal = freshDisp.allBoxes.reduce((s,bx)=> s+bx.interestAmount, 0);
+          const freshOverflowAmount = freshDisp.totalPaid - freshTheoreticalTotal;
+          const freshAllLineItems = freshDisp.paidLines.concat(freshDisp.unpaidLines, freshDisp.futureUnpaidLines);
+          close();
+          renderOverflowReceiptModal(b, freshOverflowAmount, freshAllLineItems.length);
+        });
+      }
 
       wrap.querySelectorAll('[data-qinfo-key]').forEach(btn=>{
         btn.onclick = (e)=>{
