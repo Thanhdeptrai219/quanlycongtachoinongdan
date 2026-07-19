@@ -3510,7 +3510,7 @@
   // Khối "Thông tin nâng cao" (đóng/mở, tự cuộn xuống khi mở) — dùng chung cho cả 4 loại biên lai.
   // quarterBoxesForLines = danh sách hộp chứa Quý sẽ được nêu tên trong đó (CHỈ những Quý thật sự
   // được tính là đóng/trả lãi xong trong biên lai này, không nêu Quý nào chưa chắc chắn).
-  function advancedInfoHtml(b, quarterBoxesForLines, idPrefix, forceOpen){
+  function advancedInfoHtml(b, quarterBoxesForLines, idPrefix, forceOpen, extraLines){
     const proj = projectOf(b);
     const hamletName = b.hamlet || '';
     const extList = getBorrowerExtensions(b.id);
@@ -3526,6 +3526,7 @@
     lines.push(`Lãi suất: ${fmtPct(parseFloat(b.rate)||0)}%/năm`);
     extList.forEach((e,i)=> lines.push(`Lãi suất quá hạn lần ${i+1}: ${fmtPct(e.ratePct||0)}%/năm`));
     quarterBoxesForLines.forEach(bx=> lines.push(`${formatTimelineQuarterLabel(bx)} được bắt đầu từ ngày ${fmtDate(bx.from)} đến ngày ${fmtDate(bx.to)}`));
+    if(extraLines) extraLines.forEach(l=> lines.push(l));
     return `
       <div style="text-align:center; margin-top:14px;"><button type="button" class="btn btn-ghost btn-sm preview-allow" id="${idPrefix}-adv-toggle">Thông tin nâng cao</button></div>
       <div id="${idPrefix}-adv-info" style="display:${forceOpen?'block':'none'}; margin-top:8px;">${lines.map(l=>`<p class="sub" style="margin:0 0 6px;">${escapeHtml(l)}</p>`).join('')}</div>`;
@@ -9366,30 +9367,22 @@ ${fileGenerationTrainingText()}`;
 
     wrap.innerHTML = `
       <div class="modal" style="max-width:96vw; width:620px;">
-        <div class="modal-head ${headClass}"><h3>${RECEIPT_TITLE_HTML[r.categoryKey]||escapeHtml(r.displayTitle||'')}</h3><button class="modal-close preview-allow" id="rcd-close">✕</button></div>
+        <div class="modal-head" style="background:#fff; border-bottom:1px solid var(--line);"><h3>${RECEIPT_TITLE_HTML[r.categoryKey]||escapeHtml(r.displayTitle||'')}</h3><button class="modal-close preview-allow" id="rcd-close">✕</button></div>
         <div class="modal-body">
           <p class="sub" style="margin:0 0 10px;">Biên lai này được lập vào ${dateLbl}</p>
           ${bodyExtraHtml}
           ${hasLabel? `<div class="divider-lbl" style="margin-top:14px;">Phân loại biên lai</div><div class="kv-row"><span style="display:flex; align-items:center; gap:6px;">${escapeHtml(labelName)}</span><span style="display:inline-block; width:30px; height:10px; background:${labelColor}; border:1px solid var(--line);"></span></div>` : ''}
-          <button type="button" class="btn btn-block preview-allow" id="rcd-advinfo-btn" style="margin-top:16px; text-align:left; background:var(--paper-2); border:1px solid var(--line); font-weight:700;">👁️ Thông tin nâng cao ▾</button>
-          <div id="rcd-advinfo" style="display:none; margin-top:10px;">
-            <div class="kv-row"><span>Người lập biên lai</span><b>${escapeHtml(r.createdByName||r.createdBy||'')}</b></div>
-            <div class="kv-row"><span>Mã biên lai</span><b style="font-size:11px;">${escapeHtml(r.id)}</b></div>
-          </div>
+          ${advancedInfoHtml(b, (r.quarterLines||[]).map(q=>({ ...resolveQuarterDatesForYear(q.qk, q.year), qk:q.qk, year:q.year })), 'rcd', false, [
+            `Người lập biên lai: ${r.createdByName||r.createdBy||''}`,
+            `Mã biên lai: ${r.id}`,
+          ])}
         </div>
         <div class="modal-foot"><button class="btn btn-ghost preview-allow" id="rcd-close2">Đóng bảng</button></div>
       </div>`;
     wrap.querySelector('#rcd-close').onclick = close;
     wrap.querySelector('#rcd-close2').onclick = close;
     wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
-    const advBtn = wrap.querySelector('#rcd-advinfo-btn');
-    const advBox = wrap.querySelector('#rcd-advinfo');
-    advBtn.onclick = ()=>{
-      const opening = advBox.style.display==='none';
-      advBox.style.display = opening? 'block' : 'none';
-      advBtn.innerHTML = `👁️ Thông tin nâng cao ${opening?'▴':'▾'}`;
-      if(opening){ const body = wrap.querySelector('.modal-body'); if(body) setTimeout(()=> body.scrollTo({ top: body.scrollHeight, behavior:'smooth' }), 50); }
-    };
+    wireAdvancedInfo(wrap, 'rcd', ()=>{});
   }
   // Lấy đúng {label,get} của 1 số cột trong BORROWER_COLUMNS() theo đúng key được liệt kê, đúng thứ
   // tự được yêu cầu — dùng để dựng nhanh bộ cột riêng cho từng danh sách trong Kho lưu trữ.
@@ -9555,12 +9548,14 @@ ${fileGenerationTrainingText()}`;
     const TAB_LABELS_UPPER = { receipts:'KHO BIÊN LAI', confirmations:'KHO GIẤY XÁC NHẬN', logs:'KHO DÒNG NHẬT KÝ' };
     function tabBtnsHtml(idPrefix){
       const tabs = [ ['receipts','Kho Biên lai'], ['confirmations','Kho Giấy xác nhận'], ['logs','Kho dòng nhật ký'] ];
-      return `<div style="display:flex; border:2px solid #2e7d32;">${tabs.map(([key,label])=>{
+      const inner = `<div style="display:flex; border:2px solid #2e7d32;">${tabs.map(([key,label])=>{
         const active = state.archiveTab===key;
         const color = TAB_COLORS[key];
         const textColor = (active && key==='logs') ? '#000' : (active? '#fff' : '');
         return `<button type="button" class="archive-tab-btn preview-allow ${active?'active':''}" data-archive-tab="${idPrefix}-${key}" data-archive-tab-key="${key}" style="${active?`background:${color}; border-color:${color}; color:${textColor};`:''}"><span class="archive-tab-text">${label}</span></button>`;
       }).join('')}</div>`;
+      // Chỉ khung tiêu đề (top) mới có thêm viền vàng bao ngoài viền xanh lá.
+      return idPrefix==='top' ? `<div style="border:2px solid #fbc02d; padding:2px; display:inline-block;">${inner}</div>` : inner;
     }
     function render(){
       const hamlets = state.config.hamlets||[];
@@ -10265,7 +10260,7 @@ ${fileGenerationTrainingText()}`;
           ${disp.futureUnpaidLines.length? disp.futureUnpaidLines.map(renderQLine).join('') : `<p class="sub">Không có quý nào chưa đóng lãi trong tương lai.</p>`}
           <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng ${disp.futureUnpaidLines.length} quý chưa đóng lãi (tương lai)</span><b>= ${moneySpaced(disp.futureUnpaidTotal)}</b></div>
           <div class="kv-row" style="margin-top:10px; border-top:2px solid var(--line); padding-top:8px;"><span>Tổng ${disp.unpaidLines.length+disp.futureUnpaidLines.length} quý chưa đóng lãi (quá khứ, hiện tại và Tương lai)</span><b>= ${moneySpaced(grandUnpaid)}</b></div>
-          <div class="kv-row" style="margin-top:6px; border-top:2px solid var(--line); padding-top:8px;"><span>Tổng tất cả (quá khứ + hiện tại + Tương lai) (${allLineItems.length} quý)</span><b>= ${moneySpaced(disp.totalPaid + grandUnpaid)}</b></div>
+          <div class="kv-row" style="margin-top:6px; border-top:2px solid var(--line); padding-top:8px;"><span>Tổng tất cả (quá khứ + hiện tại + Tương lai) (${allLineItems.length} quý)</span><b>= ${moneySpaced(theoreticalTotal)}</b></div>
           ${loanInfoLines}
           ${currentQuarterBoundariesCaptionHtml()}`;
 
@@ -10568,6 +10563,7 @@ ${fileGenerationTrainingText()}`;
     let selectedCategoryId = '';
 
     function render(){
+      try{
       wrap.innerHTML = `
         <div class="modal" style="max-width:96vw; width:640px;">
           <div class="modal-head receipt-head-refund"><h3>BIÊN LAI XỬ LÝ SỐ TIỀN LÃI ĐÃ ĐÓNG VƯỢT NGƯỠNG TỔNG SỐ TIỀN CẦN PHẢI ĐÓNG CỦA KHOẢN VAY ${escapeHtml(b.name).toUpperCase()}</h3><button class="modal-close preview-allow" id="ovf-close">✕</button></div>
@@ -10636,6 +10632,7 @@ ${fileGenerationTrainingText()}`;
         close();
         showBigToast(`Đã phê duyệt thành công: xử lý số tiền vượt ngưỡng của hộ vay ${b.name} là ${groupDigitsRight(String(Math.round(overflowAmount)),3)}đ`);
       };
+      }catch(err){ console.error('Lỗi khi hiện Biên lai xử lý vượt ngưỡng:', err); alert('Có lỗi khi mở Biên lai xử lý vượt ngưỡng: '+(err&&err.message||err)); }
     }
     render();
   }
