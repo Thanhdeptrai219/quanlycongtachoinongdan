@@ -10291,6 +10291,19 @@ ${fileGenerationTrainingText()}`;
           const ids = (btn.dataset.sharedEarlyRepayIds||'').split(',').filter(Boolean);
           const groupList = ids.map(id=> state.borrowers.find(b=>b.id===id)).filter(Boolean);
           if(!groupList.length){ alert('Không tìm thấy người vay nào trong danh sách này.'); return; }
+          if(groupList.length<2){ alert('Chức năng "Tất toán khoản vay" ở dòng Tổng chỉ có tác dụng khi trong danh sách có từ 2 người trở lên.'); return; }
+          const allOk = groupList.every(b=>{
+            const exts = getBorrowerExtensions(b.id);
+            const inExt = exts.length>0;
+            const proj = projectOf(b);
+            const dueRef = exts.length? exts[exts.length-1].to : (proj? proj.dueDate : b.dueDate);
+            const dLeft = daysRemainingUntil(dueRef);
+            return inExt || (dLeft!=null && dLeft<=60);
+          });
+          if(!allOk){
+            alert('Chỉ cho phép các hộ trong danh sách có "Ngày đến hạn" (hoặc "Ngày gia hạn gần nhất" nếu có) còn ≤ 60 ngày, hoặc đang trong thời gian gia hạn nợ, mới được Tất toán khoản vay. Đối với hộ chưa gần đến ngày đến hạn, vui lòng chọn "Trả nợ trước hạn".');
+            return;
+          }
           renderSharedEarlyRepaymentModal(gid, groupList);
         };
       });
@@ -10474,7 +10487,7 @@ ${fileGenerationTrainingText()}`;
       const canProceed = selectedNames.size>0;
       wrap.innerHTML = `
         <div class="modal" style="max-width:96vw; width:900px;">
-          <div class="modal-head"><h3>Chọn quý để tính tiền lãi cho các hộ vay</h3><button class="modal-close preview-allow" id="siap-close">✕</button></div>
+          <div class="modal-head"><h3>Chọn quý để tính tiền lãi cho các hộ vay (Biên lai Chung)</h3><button class="modal-close preview-allow" id="siap-close">✕</button></div>
           <div class="modal-body">
             <p style="margin:0 0 4px; color:#000;">Tổng ${groupList.length} hộ vay: ${escapeHtml(namesStr)}</p>
             <p class="sub" style="margin:0 0 10px; color:#b71c1c;">Chỉ hiển thị những quý được tính tiền lãi chung, điều kiện hiển thị: Các quý có cùng tên quý như nhau, và số tiền bên trong của từng quý cũng giống hệt nhau (của những hộ trên).</p>
@@ -10500,7 +10513,7 @@ ${fileGenerationTrainingText()}`;
           <div class="modal-foot" style="justify-content:space-between;">
             <button class="btn btn-ghost preview-allow" id="siap-cancel">Đóng bảng</button>
             <div style="display:flex; align-items:center; gap:12px;">
-              ${canProceed? `<span class="sub" style="font-weight:700; color:var(--rice-dark);">Tổng ${groupDigitsRight(String(Math.round(selectedSum)),3)} đồng (trong ${selectedNames.size}-quý được chọn - tiền dư)</span>` : ''}
+              ${canProceed? `<span class="sub" style="font-weight:700; color:var(--rice-dark);">Tổng ${groupDigitsRight(String(Math.round(selectedSum)),3)} đồng (trong ${selectedNames.size}-quý được chọn${leftoverTotal>0?' - tiền dư':''})</span>` : ''}
               <button class="btn btn-primary preview-allow" id="siap-start" ${canProceed?'':'disabled'}>Bắt đầu tính tiền và lập biên lai</button>
             </div>
           </div>
@@ -10579,7 +10592,7 @@ ${fileGenerationTrainingText()}`;
     function render(){
       wrap.innerHTML = `
         <div class="modal" style="max-width:96vw; width:680px;">
-          <div class="modal-head receipt-head-payment"><h3>BIÊN LAI ĐÓNG TIỀN LÃI ĐỐI VỚI ${groupList.length} HỘ VAY THUỘC PHƯƠNG ÁN VAY ${escapeHtml(projName).toUpperCase()}</h3><button class="modal-close preview-allow" id="sirc-close">✕</button></div>
+          <div class="modal-head receipt-head-payment"><h3>BIÊN LAI CHUNG: ĐÓNG TIỀN LÃI ĐỐI VỚI ${groupList.length} HỘ VAY THUỘC PHƯƠNG ÁN VAY ${escapeHtml(projName).toUpperCase()}</h3><button class="modal-close preview-allow" id="sirc-close">✕</button></div>
           <div class="modal-body">
             <p class="sub" style="margin:0 0 10px;">Biên lai này được lập vào ngày ${fmtDate(todayStr())}</p>
             <p style="margin:0 0 6px; font-weight:700;">Tổng ${groupList.length} hộ vay: ${escapeHtml(namesStr)}</p>
@@ -10590,8 +10603,9 @@ ${fileGenerationTrainingText()}`;
               <button type="button" class="qbox-info-btn preview-allow" id="sirc-leftover-info" style="width:20px; height:20px; font-size:11px; border-radius:50%;">i</button>
             </div>
             <div id="sirc-leftover-tip" style="display:none; background:var(--paper-2); border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:12px; margin:6px 0;">Số tiền dư từ đợt trước của từng hộ được tự động trừ vào Biên lai chung này.</div>
+            ${leftoverTotal<=0? `<p class="sub">Các hộ này không có hộ nào có tiền dư từ đợt trước</p>` : `
             ${leftoverPerBorrower.map(x=>`<div class="kv-row"><span>${escapeHtml(x.b.name)}</span><b>- ${moneySpaced(x.leftover)}</b></div>`).join('')}
-            <div class="kv-row" style="border-top:1px solid var(--line); margin-top:6px; padding-top:6px;"><span>Tổng tiền dư đợt trước của ${groupList.length} hộ</span><b style="color:#5d4037;">- ${moneySpaced(leftoverTotal)}</b></div>
+            <div class="kv-row" style="border-top:1px solid var(--line); margin-top:6px; padding-top:6px;"><span>Tổng tiền dư đợt trước của ${groupList.length} hộ</span><b style="color:#5d4037;">- ${moneySpaced(leftoverTotal)}</b></div>`}
             <div class="kv-row big-money-row" style="border-top:2px solid var(--line); margin-top:10px; padding-top:8px;">
               <span style="display:flex; align-items:center; gap:4px;">Tổng tất cả (số tiền thực nhận) <button type="button" class="qbox-info-btn" id="sirc-total-info" style="width:20px; height:20px; font-size:11px; border-radius:50%;">i</button></span>
               <b>= ${moneySpaced(grandTotal)}</b>
@@ -10633,6 +10647,7 @@ ${fileGenerationTrainingText()}`;
         <div id="sirc-adv-body" style="display:${advInfoOpen?'block':'none'}; margin-top:8px;">
           <p class="sub" style="margin:0 0 6px;">Phương án vay: ${escapeHtml(projName)}</p>
           ${groupList.map(b=>`<p class="sub" style="margin:0 0 4px;">${escapeHtml(b.name)} — số tiền vay gốc ${moneySpaced(b.principal)}, lãi suất ${String(parseFloat(b.rate)||0).replace('.',',')}%/năm</p>`).join('')}
+          ${chosenQuarters.map(q=>`<p class="sub" style="margin:0 0 4px;">${escapeHtml(q.name)} tính từ ngày ${fmtDate(q.from)} đến ngày ${fmtDate(q.to)}</p>`).join('')}
         </div>`;
       const advBtn = wrap.querySelector('#sirc-adv-toggle');
       if(advBtn) advBtn.onclick = ()=>{ advInfoOpen = !advInfoOpen; render(); };
@@ -10665,11 +10680,16 @@ ${fileGenerationTrainingText()}`;
           `Tổng ${groupList.length} hộ vay: ${namesStr}`,
           ...chosenQuarters.map(q=> `${q.name} (${moneySpaced(q.amount)} x ${groupList.length} hộ) = ${moneySpaced(q.amount*groupList.length)}`),
           `Tổng tiền các quý = ${moneySpaced(quarterTotal)}`,
-          ...leftoverPerBorrower.map(x=> `Tiền dư đợt trước ${x.b.name}: - ${moneySpaced(x.leftover)}`),
-          `Tổng tiền dư đợt trước của ${groupList.length} hộ = - ${moneySpaced(leftoverTotal)}`,
+          (leftoverTotal<=0)
+            ? `Các hộ này không có hộ nào có tiền dư từ đợt trước`
+            : [...leftoverPerBorrower.map(x=> `Tiền dư đợt trước ${x.b.name}: - ${moneySpaced(x.leftover)}`), `Tổng tiền dư đợt trước của ${groupList.length} hộ = - ${moneySpaced(leftoverTotal)}`].join('\n'),
           `Tổng tất cả (số tiền thực nhận) = ${moneySpaced(grandTotal)}`,
           `Người đóng tiền: ${payerName}`,
           `Người thu tiền: ${collectorName}`,
+          `--- Thông tin nâng cao ---`,
+          `Phương án vay: ${projName}`,
+          ...groupList.map(b=> `${b.name} — số tiền vay gốc ${moneySpaced(b.principal)}, lãi suất ${String(parseFloat(b.rate)||0).replace('.',',')}%/năm`),
+          ...chosenQuarters.map(q=> `${q.name} tính từ ngày ${fmtDate(q.from)} đến ngày ${fmtDate(q.to)}`),
         ];
         await pushSharedReceiptRecord('shared_interest_payment', `BL chung: Đóng tiền lãi cho các hộ trong phương án vay ${projName}`,
           detailLines.join('\n'), grandTotal, '+', groupList.map(b=>b.id), selectedCategoryId||null);
@@ -10704,11 +10724,15 @@ ${fileGenerationTrainingText()}`;
         const amt = kind==='principal'? r.principal : r.interestAmt;
         const label = kind==='principal'? `tiền vay gốc ${escapeHtml(r.b.name)}` : escapeHtml(r.b.name);
         const style = checked? '' : 'color:#9e9e9e; text-decoration:line-through;';
-        return `<div class="kv-row"><span style="display:flex; align-items:center; gap:6px; ${style}"><input type="checkbox" class="preview-allow srp-chk" data-kind="${kind}" data-idx="${i}" ${checked?'checked':''}> ${label}</span><b style="${style}">${moneySpaced(amt)}</b></div>`;
+        const disabled = kind==='interest' && !r.principalChecked;
+        return `<div class="kv-row"><span style="display:flex; align-items:center; gap:6px; ${style}"><input type="checkbox" class="preview-allow srp-chk" data-kind="${kind}" data-idx="${i}" ${checked?'checked':''} ${disabled?'disabled':''}> ${label}</span><b style="${style}">${moneySpaced(amt)}</b></div>`;
       }).join('');
     }
     function render(){
       const { totalPrincipal, totalInterest, grandTotal } = totals();
+      const allSameLoanDate = groupList.every(b=>b.loanDate===groupList[0].loanDate);
+      const allSameHamlet = groupList.every(b=>b.hamlet===groupList[0].hamlet);
+      const allSameDue = groupList.every(b=>b.dueDate===groupList[0].dueDate);
       wrap.innerHTML = `
         <div class="modal" style="max-width:96vw; width:680px;">
           <div class="modal-head receipt-head-payment"><h3>BIÊN LAI CHUNG: TRẢ NỢ TRƯỚC HẠN CHO CÁC HỘ TRONG PHƯƠNG ÁN VAY ${escapeHtml(projName).toUpperCase()}</h3><button class="modal-close preview-allow" id="srp-close">✕</button></div>
@@ -10718,13 +10742,16 @@ ${fileGenerationTrainingText()}`;
             ${checklistHtml('principal')}
             <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng tiền vay gốc ${rows.length} hộ vay</span><b>= ${moneySpaced(totalPrincipal)}</b></div>
             <div class="divider-lbl" style="margin-top:14px;">Tiền lãi chưa đóng (tính đến QUÝ hiện tại) của các hộ như sau</div>
+            ${totalInterest<=0 && rows.every(r=>r.interestAmt<=0)? `<p class="sub">Các hộ trên đều không có Lãi tồn chưa đóng</p>` : `
             ${checklistHtml('interest')}
-            <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng tiền lãi chưa đóng của ${rows.length} hộ vay</span><b>= ${moneySpaced(totalInterest)}</b></div>
+            <div class="kv-row" style="border-top:1px solid var(--line); padding-top:6px;"><span>Tổng tiền lãi chưa đóng của ${rows.length} hộ vay</span><b>= ${moneySpaced(totalInterest)}</b></div>`}
             <div class="kv-row big-money-row" style="border-top:2px solid var(--line); margin-top:10px; padding-top:8px;"><span>Số tiền thực tế nhận được</span><b>= ${moneySpaced(grandTotal)}</b></div>
             <div style="text-align:center; margin-top:14px;"><button type="button" class="btn btn-ghost btn-sm preview-allow" id="srp-adv-toggle">Thông tin nâng cao</button></div>
             <div id="srp-adv-info" style="display:${advInfoOpen?'block':'none'}; margin-top:8px;">
               <p class="sub" style="margin:0 0 6px;">Phương án vay: ${escapeHtml(projName)}</p>
-              ${rows.map(r=>`<p class="sub" style="margin:0 0 4px;">${escapeHtml(r.b.name)}${r.b.isHeir? ' (người thừa kế, ngày vay riêng: '+fmtDate(r.b.loanDate)+')' : ''}</p>`).join('')}
+              <p class="sub" style="margin:0 0 4px;">Địa chỉ: ${allSameHamlet? escapeHtml(groupList[0].hamlet||'') : rows.map(r=>`${escapeHtml(r.b.name)}: ${escapeHtml(r.b.hamlet||'')}`).join('; ')}</p>
+              <p class="sub" style="margin:0 0 4px;">Ngày vay chung: ${allSameLoanDate? fmtDate(groupList[0].loanDate) : rows.map(r=>`${escapeHtml(r.b.name)}${r.b.isHeir?' (người thừa kế)':''}: ${fmtDate(r.b.loanDate)}`).join('; ')}</p>
+              <p class="sub" style="margin:0 0 4px;">Ngày đến hạn: ${allSameDue? fmtDate(groupList[0].dueDate) : rows.map(r=>`${escapeHtml(r.b.name)}: ${fmtDate(r.b.dueDate)}`).join('; ')}</p>
             </div>
           </div>
           <div class="modal-foot">
@@ -10739,7 +10766,14 @@ ${fileGenerationTrainingText()}`;
         cb.onclick = (e)=>{
           e.stopPropagation();
           const i = parseInt(cb.dataset.idx,10);
-          if(cb.dataset.kind==='principal') rows[i].principalChecked = cb.checked; else rows[i].interestChecked = cb.checked;
+          if(cb.dataset.kind==='principal'){
+            rows[i].principalChecked = cb.checked;
+            // Bỏ chọn tiền vay gốc -> tự động bỏ chọn luôn tiền lãi chưa đóng của ĐÚNG người đó (chỉ
+            // được chọn lại khi tiền vay gốc của người đó được chọn lại).
+            if(!cb.checked) rows[i].interestChecked = false;
+          } else {
+            rows[i].interestChecked = cb.checked;
+          }
           render();
         };
       });
@@ -10762,13 +10796,22 @@ ${fileGenerationTrainingText()}`;
             settledGrandTotal: r.principal + (r.interestChecked? r.interestAmt : 0), settledMode:'province' });
           settledIds.push(r.b.id);
         }
+        const allSameLoanDate = groupList.every(b=>b.loanDate===groupList[0].loanDate);
+        const allSameHamlet = groupList.every(b=>b.hamlet===groupList[0].hamlet);
+        const allSameDue = groupList.every(b=>b.dueDate===groupList[0].dueDate);
         const detailLines = [
           `Biên lai chung Trả nợ trước hạn cho các hộ trong Phương án vay "${projName}" đã được lập vào ngày ${fmtDate(todayStr())}.`,
           ...rows.filter(r=>r.principalChecked).map(r=> `Tiền vay gốc ${r.b.name}: ${moneySpaced(r.principal)}`),
           `Tổng tiền vay gốc ${rows.length} hộ vay = ${moneySpaced(totalPrincipal)}`,
-          ...rows.filter(r=>r.interestChecked).map(r=> `Tiền lãi chưa đóng ${r.b.name}: ${moneySpaced(r.interestAmt)}`),
-          `Tổng tiền lãi chưa đóng của ${rows.length} hộ vay = ${moneySpaced(totalInterest)}`,
+          (totalInterest<=0 && rows.every(r=>r.interestAmt<=0))
+            ? `Các hộ trên đều không có Lãi tồn chưa đóng`
+            : [...rows.filter(r=>r.interestChecked).map(r=> `Tiền lãi chưa đóng ${r.b.name}: ${moneySpaced(r.interestAmt)}`), `Tổng tiền lãi chưa đóng của ${rows.length} hộ vay = ${moneySpaced(totalInterest)}`].join('\n'),
           `Số tiền thực tế nhận được = ${moneySpaced(grandTotal)}`,
+          `--- Thông tin nâng cao ---`,
+          `Phương án vay: ${projName}`,
+          `Địa chỉ: ${allSameHamlet? (groupList[0].hamlet||'') : rows.map(r=>`${r.b.name}: ${r.b.hamlet||''}`).join('; ')}`,
+          `Ngày vay chung: ${allSameLoanDate? fmtDate(groupList[0].loanDate) : rows.map(r=>`${r.b.name}${r.b.isHeir?' (người thừa kế)':''}: ${fmtDate(r.b.loanDate)}`).join('; ')}`,
+          `Ngày đến hạn: ${allSameDue? fmtDate(groupList[0].dueDate) : rows.map(r=>`${r.b.name}: ${fmtDate(r.b.dueDate)}`).join('; ')}`,
         ];
         await pushSharedReceiptRecord('shared_early_repayment', `BL chung: Trả nợ trước hạn cho các hộ trong phương án vay ${projName}`,
           detailLines.join('\n'), grandTotal, '+', settledIds);
@@ -12549,6 +12592,7 @@ ${fileGenerationTrainingText()}`;
           const ids = (btn.dataset.sharedInterestPaymentIds||'').split(',').filter(Boolean);
           const groupList = ids.map(id=> state.borrowers.find(b=>b.id===id)).filter(Boolean);
           if(!groupList.length){ alert('Không tìm thấy người vay nào trong danh sách này.'); return; }
+          if(groupList.length<2){ alert('Chức năng "Đóng tiền lãi" ở dòng Tổng chỉ có tác dụng khi trong danh sách có từ 2 người trở lên.'); return; }
           renderSharedInterestPaymentSelectModal(gid, groupList);
         };
       });
