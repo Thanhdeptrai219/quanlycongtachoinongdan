@@ -9857,7 +9857,7 @@ ${fileGenerationTrainingText()}`;
       entries.push({
         type:'confirmation', scope:'chung',
         titleHtml: `📝 <span style="color:${kindColor};">${escapeHtml((c.title||'').replace(/^GXN Chung:\s*/i,'GXN Chung: '))}</span>`,
-        affectedNames: (c.affectedBorrowerIds||[]).map(id=>{ const b=state.borrowers.find(x=>x.id===id); return b? b.name : id; }),
+        affectedNames: c.kind==='quarter_config_change_bulk' ? ['Tất cả khoản vay trong sổ vay vốn'] : (c.affectedBorrowerIds||[]).map(id=>{ const b=state.borrowers.find(x=>x.id===id); return b? b.name : id; }),
         createdAt: c.createdAt, createdByName: c.createdByName, createdBy: c.createdBy, createdByIp: c.createdByIp, createdByDevice: c.createdByDevice,
         openFn: ()=> renderConfirmationDetailModal(c),
       });
@@ -9903,8 +9903,8 @@ ${fileGenerationTrainingText()}`;
     return `<div class="preview-allow" data-log-entry-idx="${e.__idx}" style="border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-bottom:8px; cursor:pointer; background:#fff;">
       <div style="font-weight:700;">${e.titleHtml}</div>
       ${e.affectedNames.length? `<div class="sub" style="margin-top:4px;">${escapeHtml(e.affectedNames.join(', '))}</div>` : ''}
-      <div class="sub" style="margin-top:4px;">${dateLbl}</div>
-      <div class="sub" style="margin-top:4px;">${escapeHtml(e.createdByName||'')} — ${escapeHtml(e.createdBy||'(không có email)')} — IP: ${escapeHtml(e.createdByIp||'(không lấy được)')}</div>
+      <div class="sub" style="margin-top:4px; text-align:right;">${dateLbl}</div>
+      <div class="sub" style="margin-top:4px; text-align:right;">${escapeHtml(e.createdByName||'')} — ${escapeHtml(e.createdBy||'(không có email)')} — IP: ${escapeHtml(e.createdByIp||'(không lấy được)')}</div>
     </div>`;
   }
   function buildActivityLogPanelHtml(){
@@ -9929,7 +9929,7 @@ ${fileGenerationTrainingText()}`;
         ${state.logSpecificTime? buildYearFilterDropdownHtml() : ''}
         <button type="button" class="btn btn-ghost btn-sm preview-allow" id="log-specifictime-btn">${state.logSpecificTime? 'Tất cả thời điểm' : 'Chọn thời điểm cụ thể'}</button>
       </div>
-      <div style="margin-top:14px; border:2px solid #fbc02d; border-radius:10px; padding:12px; max-height:60vh; overflow:auto;">
+      <div style="margin-top:14px; border:2px solid #fbc02d; border-radius:10px; padding:12px; min-height:60vh; max-height:60vh; overflow:auto;">
         ${filtered.length? filtered.map(activityLogRowHtml).join('') : `<p class="sub" style="padding:10px 0;">${allEntries.length===0? 'Chưa có dòng nhật ký nào cả.' : 'Không có dòng nhật ký nào theo bộ lọc hiện tại.'}</p>`}
       </div>`;
   }
@@ -10303,7 +10303,7 @@ ${fileGenerationTrainingText()}`;
       wrap.querySelector('#arc-close2').onclick = close;
       wrap.onclick = (e)=>{ if(e.target===wrap) close(); };
       wrap.querySelectorAll('[data-archive-tab]').forEach(btn=>{
-        btn.onclick = ()=>{ state.archiveTab = btn.dataset.archiveTabKey; render(); };
+        btn.onclick = ()=>{ state.archiveTab = btn.dataset.archiveTabKey; state.openFilterDropdown = null; render(); };
       });
       if(state.archiveTab==='receipts' || state.archiveTab==='confirmations'){
         const sharedReceiptBtn = wrap.querySelector('#arc-shared-receipt-btn');
